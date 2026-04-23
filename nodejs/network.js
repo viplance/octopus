@@ -30,8 +30,8 @@ class NetworkManager {
       socket.on('end', () => console.log('Client disconnected'));
     });
 
-    this.server.listen(this.port, () => {
-      console.log(`Server listening on port ${this.port}`);
+    this.server.listen(this.port, '0.0.0.0', () => {
+      console.log(`Server listening on 0.0.0.0:${this.port}`);
       this.bonjour.publish({ name: this.serviceName, type: 'octopussync', port: this.port });
       console.log('Published Bonjour service');
     });
@@ -45,7 +45,11 @@ class NetworkManager {
       if (service.name === this.serviceName) return; // ignore self
       console.log('Found service:', service.name);
       
-      this.connectTo(service.addresses[0], service.port);
+      // Prefer IPv4 addresses to avoid IPv6 link-local connection timeouts
+      const ipv4 = service.addresses.find(ip => net.isIPv4(ip));
+      const targetIp = ipv4 || service.addresses[0];
+      
+      this.connectTo(targetIp, service.port);
       browser.stop();
     });
   }
