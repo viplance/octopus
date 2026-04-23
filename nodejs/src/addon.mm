@@ -82,6 +82,7 @@ bool is_intercepting = false;
 int current_shortcut = 1; // 1 = Cmd+Option+E, 2 = Eject
 CFMachPortRef eventTap = NULL;
 CFRunLoopSourceRef runLoopSource = NULL;
+CGPoint saved_cursor_position;
 
 struct EventData {
     int type;
@@ -108,6 +109,15 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
             
             if (keyCode == NX_KEYTYPE_EJECT && isKeyDown) {
                 is_intercepting = !is_intercepting;
+                
+                if (is_intercepting) {
+                    CGEventRef locEvent = CGEventCreate(NULL);
+                    saved_cursor_position = CGEventGetLocation(locEvent);
+                    CFRelease(locEvent);
+                } else {
+                    CGWarpMouseCursorPosition(saved_cursor_position);
+                }
+
                 EventData* ed = new EventData{ -1, is_intercepting ? 1 : 0, 0, 0, 0, 0, 0 };
                 tsfn.NonBlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
                     jsCallback.Call({ Napi::String::New(env, "toggle"), Napi::Boolean::New(env, value->keycode != 0) });
@@ -121,6 +131,15 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
         int64_t keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
         if ((flags & kCGEventFlagMaskCommand) && (flags & kCGEventFlagMaskAlternate) && keycode == 14) {
             is_intercepting = !is_intercepting;
+            
+            if (is_intercepting) {
+                CGEventRef locEvent = CGEventCreate(NULL);
+                saved_cursor_position = CGEventGetLocation(locEvent);
+                CFRelease(locEvent);
+            } else {
+                CGWarpMouseCursorPosition(saved_cursor_position);
+            }
+
             EventData* ed = new EventData{ -1, is_intercepting ? 1 : 0, 0, 0, 0, 0, 0 };
             tsfn.NonBlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
                 jsCallback.Call({ Napi::String::New(env, "toggle"), Napi::Boolean::New(env, value->keycode != 0) });
@@ -225,7 +244,17 @@ Napi::Value StartTap(const Napi::CallbackInfo& info) {
 
 Napi::Value SetIntercepting(const Napi::CallbackInfo& info) {
     if (info.Length() > 0 && info[0].IsBoolean()) {
-        is_intercepting = info[0].As<Napi::Boolean>().Value();
+        bool new_val = info[0].As<Napi::Boolean>().Value();
+        if (is_intercepting != new_val) {
+            is_intercepting = new_val;
+            if (is_intercepting) {
+                CGEventRef locEvent = CGEventCreate(NULL);
+                saved_cursor_position = CGEventGetLocation(locEvent);
+                CFRelease(locEvent);
+            } else {
+                CGWarpMouseCursorPosition(saved_cursor_position);
+            }
+        }
     }
     return info.Env().Null();
 }
