@@ -38,18 +38,34 @@ if (require.main === module) {
   console.log(`Found ${devices.length} HID Devices:`);
   console.table(devices);
 
-  console.log('\nSelect the shortcut to toggle OctopusSync:');
-  console.log('1) Cmd + Option + E (Recommended)');
-  console.log('2) Eject Key');
-  rl.question('Choice (1 or 2): ', (answer) => {
-    rl.close();
-    const choice = answer.trim() === '2' ? 2 : 1;
-    addon.setShortcut(choice);
-    startApplication(choice);
+  rl.question('Select devices to share (comma-separated indices, e.g. 0,2) or press Enter for ALL: ', (devAnswer) => {
+    let selectedDevices = devices;
+    if (devAnswer.trim() !== '') {
+      const indices = devAnswer.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n) && n >= 0 && n < devices.length);
+      if (indices.length > 0) {
+        selectedDevices = indices.map(i => devices[i]);
+      }
+    }
+    
+    console.log('\nSelected Devices to share:');
+    console.table(selectedDevices);
+
+    const shareKeyboard = selectedDevices.some(d => d.type === 'keyboard');
+    const shareMouse = selectedDevices.some(d => d.type === 'mouse' || d.type === 'touchpad');
+
+    console.log('\nSelect the shortcut to toggle OctopusSync:');
+    console.log('1) Cmd + Option + E (Recommended)');
+    console.log('2) Eject Key');
+    rl.question('Choice (1 or 2): ', (answer) => {
+      rl.close();
+      const choice = answer.trim() === '2' ? 2 : 1;
+      addon.setShortcut(choice);
+      startApplication(choice, shareKeyboard, shareMouse);
+    });
   });
 }
 
-function startApplication(shortcutChoice) {
+function startApplication(shortcutChoice, shareKeyboard, shareMouse) {
   console.log('\n--- Setup Network & Input ---');
   let isIntercepting = false;
   
@@ -80,7 +96,7 @@ function startApplication(shortcutChoice) {
     } else if (type === 'event') {
       network.sendEvent(event);
     }
-  });
+  }, shareKeyboard, shareMouse);
 
   console.log('Note: To intercept events, ensure your terminal has Accessibility permissions in System Settings -> Privacy & Security.');
   console.log('Waiting for peer connections via Bonjour...');

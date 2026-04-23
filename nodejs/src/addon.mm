@@ -168,15 +168,24 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
     return NULL; // Block event from reaching host OS
 }
 
-void RunLoopThread() {
-    CGEventMask eventMask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) |
-                            CGEventMaskBit(kCGEventMouseMoved) | CGEventMaskBit(kCGEventLeftMouseDragged) |
-                            CGEventMaskBit(kCGEventRightMouseDragged) | CGEventMaskBit(kCGEventLeftMouseDown) |
-                            CGEventMaskBit(kCGEventLeftMouseUp) | CGEventMaskBit(kCGEventRightMouseDown) |
-                            CGEventMaskBit(kCGEventRightMouseUp) | CGEventMaskBit(kCGEventScrollWheel) |
-                            CGEventMaskBit(NX_SYSDEFINED);
+bool global_share_keyboard = true;
+bool global_share_mouse = true;
 
-    eventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault, eventMask, CGEventCallback, NULL);
+void RunLoopThread() {
+    CGEventMask eventMask = CGEventMaskBit(NX_SYSDEFINED);
+    
+    if (global_share_keyboard) {
+        eventMask |= CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp);
+    }
+    
+    if (global_share_mouse) {
+        eventMask |= CGEventMaskBit(kCGEventMouseMoved) | CGEventMaskBit(kCGEventLeftMouseDragged) |
+                     CGEventMaskBit(kCGEventRightMouseDragged) | CGEventMaskBit(kCGEventLeftMouseDown) |
+                     CGEventMaskBit(kCGEventLeftMouseUp) | CGEventMaskBit(kCGEventRightMouseDown) |
+                     CGEventMaskBit(kCGEventRightMouseUp) | CGEventMaskBit(kCGEventScrollWheel);
+    }
+
+    eventTap = CGEventTapCreate(kCGHIDEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault, eventMask, CGEventCallback, NULL);
     
     if (!eventTap) {
         std::cerr << "Failed to create event tap. Requires Accessibility permissions in System Settings -> Privacy & Security." << std::endl;
@@ -194,6 +203,11 @@ Napi::Value StartTap(const Napi::CallbackInfo& info) {
     if (info.Length() < 1 || !info[0].IsFunction()) {
         Napi::TypeError::New(env, "Function expected").ThrowAsJavaScriptException();
         return env.Null();
+    }
+    
+    if (info.Length() >= 3) {
+        global_share_keyboard = info[1].As<Napi::Boolean>().Value();
+        global_share_mouse = info[2].As<Napi::Boolean>().Value();
     }
 
     tsfn = Napi::ThreadSafeFunction::New(
