@@ -109,7 +109,7 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
             if (keyCode == NX_KEYTYPE_EJECT && isKeyDown) {
                 is_intercepting = !is_intercepting;
                 EventData* ed = new EventData{ -1, is_intercepting ? 1 : 0, 0, 0, 0, 0, 0 };
-                tsfn.BlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
+                tsfn.NonBlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
                     jsCallback.Call({ Napi::String::New(env, "toggle"), Napi::Boolean::New(env, value->keycode != 0) });
                     delete value;
                 });
@@ -122,7 +122,7 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
         if ((flags & kCGEventFlagMaskCommand) && (flags & kCGEventFlagMaskAlternate) && keycode == 14) {
             is_intercepting = !is_intercepting;
             EventData* ed = new EventData{ -1, is_intercepting ? 1 : 0, 0, 0, 0, 0, 0 };
-            tsfn.BlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
+            tsfn.NonBlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
                 jsCallback.Call({ Napi::String::New(env, "toggle"), Napi::Boolean::New(env, value->keycode != 0) });
                 delete value;
             });
@@ -134,26 +134,25 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
         return event;
     }
 
-    // Block logic: do not forward event to macOS, instead send to JS
+    // Block logic: do not forward event to macOS, instead send to JS via NonBlockingCall to avoid tap timeouts
     EventData* ed = new EventData{ (int)type, 0, 0, 0, 0, 0, 0 };
     
     if (type == kCGEventKeyDown || type == kCGEventKeyUp) {
         ed->keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
         ed->flags = CGEventGetFlags(event);
     } else if (type == kCGEventMouseMoved || type == kCGEventLeftMouseDragged || type == kCGEventRightMouseDragged) {
-        CGPoint pt = CGEventGetLocation(event);
-        ed->mouseX = pt.x;
-        ed->mouseY = pt.y;
+        // Send Deltas instead of absolute coordinates!
+        ed->mouseX = CGEventGetDoubleValueField(event, kCGMouseEventDeltaX);
+        ed->mouseY = CGEventGetDoubleValueField(event, kCGMouseEventDeltaY);
     } else if (type == kCGEventLeftMouseDown || type == kCGEventLeftMouseUp || type == kCGEventRightMouseDown || type == kCGEventRightMouseUp) {
-        CGPoint pt = CGEventGetLocation(event);
-        ed->mouseX = pt.x;
-        ed->mouseY = pt.y;
+        ed->mouseX = 0;
+        ed->mouseY = 0;
         ed->mouseButton = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
     } else if (type == kCGEventScrollWheel) {
         ed->scrollWheel = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1);
     }
 
-    tsfn.BlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
+    tsfn.NonBlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
         Napi::Object obj = Napi::Object::New(env);
         obj.Set("type", value->type);
         obj.Set("keycode", value->keycode);
@@ -238,15 +237,31 @@ Napi::Value InjectEvent(const Napi::CallbackInfo& info) {
         int64_t flags = obj.Get("flags").As<Napi::Number>().Int64Value();
         event = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)keycode, type == kCGEventKeyDown);
         if (event) CGEventSetFlags(event, (CGEventFlags)flags);
-    } else if (type == kCGEventMouseMoved || type == kCGEventLeftMouseDragged || type == kCGEventRightMouseDragged) {
-        double mouseX = obj.Get("mouseX").As<Napi::Number>().DoubleValue();
-        double mouseY = obj.Get("mouseY").As<Napi::Number>().DoubleValue();
-        event = CGEventCreateMouseEvent(NULL, (CGEventType)type, CGPointMake(mouseX, mouseY), kCGMouseButtonLeft);
-    } else if (type == kCGEventLeftMouseDown || type == kCGEventLeftMouseUp || type == kCGEventRightMouseDown || type == kCGEventRightMouseUp) {
-        double mouseX = obj.Get("mouseX").As<Napi::Number>().DoubleValue();
-        double mouseY = obj.Get("mouseY").As<Napi::Number>().DoubleValue();
+    } else if (type == kCGEventMouseMoved || type == kCGEventLeftMouseDragged || type == kCGEventRightMouseDragged ||
+               type == kCGEventLeftMouseDown || type == kCGEventLeftMouseUp || type == kCGEventRightMouseDown || type == kCGEventRightMouseUp) {
+        
+        double deltaX = obj.Get("mouseX").As<Napi::Number>().DoubleValue();
+        double deltaY = obj.Get("mouseY").As<Napi::Number>().DoubleValue();
         int64_t mouseButton = obj.Get("mouseButton").As<Napi::Number>().Int64Value();
-        event = CGEventCreateMouseEvent(NULL, (CGEventType)type, CGPointMake(mouseX, mouseY), (CGMouseButton)mouseButton);
+        
+        // Compute new position based on CURRENT local mouse position
+        CGEventRef currentLocEvent = CGEventCreate(NULL);
+        CGPoint currentLoc = CGEventGetLocation(currentLocEvent);
+        CFRelease(currentLocEvent);
+        
+        currentLoc.x += deltaX;
+        currentLoc.y += deltaY;
+        
+        CGMouseButton btn = (CGMouseButton)mouseButton;
+        if (type == kCGEventMouseMoved || type == kCGEventLeftMouseDragged) btn = kCGMouseButtonLeft;
+        else if (type == kCGEventRightMouseDragged) btn = kCGMouseButtonRight;
+        
+        event = CGEventCreateMouseEvent(NULL, (CGEventType)type, currentLoc, btn);
+        
+        if (event) {
+            CGEventSetDoubleValueField(event, kCGMouseEventDeltaX, deltaX);
+            CGEventSetDoubleValueField(event, kCGMouseEventDeltaY, deltaY);
+        }
     } else if (type == kCGEventScrollWheel) {
         int64_t scrollWheel = obj.Get("scrollWheel").As<Napi::Number>().Int64Value();
         event = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 1, (int32_t)scrollWheel);
