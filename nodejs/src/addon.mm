@@ -163,6 +163,7 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
         // Send Deltas instead of absolute coordinates!
         ed->mouseX = CGEventGetDoubleValueField(event, kCGMouseEventDeltaX);
         ed->mouseY = CGEventGetDoubleValueField(event, kCGMouseEventDeltaY);
+        CGWarpMouseCursorPosition(saved_cursor_position);
     } else if (type == kCGEventLeftMouseDown || type == kCGEventLeftMouseUp || type == kCGEventRightMouseDown || type == kCGEventRightMouseUp) {
         ed->mouseX = 0;
         ed->mouseY = 0;
