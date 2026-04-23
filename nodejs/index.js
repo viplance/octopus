@@ -38,38 +38,16 @@ if (require.main === module) {
   console.log(`Found ${devices.length} HID Devices:`);
   console.table(devices);
 
-  rl.question('Select devices to share (comma-separated indices, e.g. 0,2) or press Enter for external sources only: ', (devAnswer) => {
-    let selectedDevices = devices;
-    if (devAnswer.trim() !== '') {
-      const indices = devAnswer.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n) && n >= 0 && n < devices.length);
-      if (indices.length > 0) {
-        selectedDevices = indices.map(i => devices[i]);
-      }
-    } else {
-      // Default to external devices only
-      selectedDevices = devices.filter(d => !d.name.toLowerCase().includes('internal') && !d.name.toLowerCase().includes('built-in'));
-      if (selectedDevices.length === 0) {
-        console.log('No external devices found. Defaulting to all devices.');
-        selectedDevices = devices;
-      }
-    }
-    
-    console.log('\nSelected Devices to share:');
-    console.table(selectedDevices);
-
-    const shareKeyboard = selectedDevices.some(d => d.type === 'keyboard');
-    const shareMouse = selectedDevices.some(d => d.type === 'mouse' || d.type === 'touchpad');
-
-    console.log('\nSelect the shortcut to toggle OctopusSync:');
-    console.log('1) Eject Key (Default)');
-    console.log('2) Cmd + Option + E');
-    rl.question('Choice (1 or 2, press Enter for 1): ', (answer) => {
-      rl.close();
-      // In C++ Addon: 1 = Cmd+Option+E, 2 = Eject
-      const choice = answer.trim() === '2' ? 1 : 2;
-      addon.setShortcut(choice);
-      startApplication(choice, shareKeyboard, shareMouse);
-    });
+  console.log('\nSelect the shortcut to toggle OctopusSync:');
+  console.log('1) Eject Key (Default)');
+  console.log('2) Cmd + Option + E');
+  rl.question('Choice (1 or 2, press Enter for 1): ', (answer) => {
+    rl.close();
+    // In C++ Addon: 1 = Cmd+Option+E, 2 = Eject
+    const choice = answer.trim() === '2' ? 1 : 2;
+    addon.setShortcut(choice);
+    // We share all by default since per-device filtering is not possible
+    startApplication(choice, true, true);
   });
 }
 
