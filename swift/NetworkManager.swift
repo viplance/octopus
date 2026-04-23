@@ -28,7 +28,9 @@ class NetworkManager: ObservableObject {
     
     private func startListening() {
         do {
-            listener = try NWListener(using: .tcp)
+            let parameters = NWParameters.tcp
+            parameters.includePeerToPeer = true
+            listener = try NWListener(using: parameters)
             listener?.service = NWListener.Service(name: Host.current().localizedName, type: serviceType)
             
             listener?.stateUpdateHandler = { [weak self] state in

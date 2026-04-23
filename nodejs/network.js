@@ -38,8 +38,8 @@ class NetworkManager {
       });
     });
 
-    this.server.listen(this.port, '0.0.0.0', () => {
-      console.log(`Server listening on 0.0.0.0:${this.port}`);
+    this.server.listen(this.port, '::', () => {
+      console.log(`Server listening on :: (all interfaces, including IPv6/AWDL) port ${this.port}`);
       this.bonjour.publish({ name: this.serviceName, type: 'octopussync', port: this.port });
       console.log('Published Bonjour service');
     });
@@ -51,33 +51,87 @@ class NetworkManager {
     
     browser.on('up', (service) => {
       if (service.name === this.serviceName) return; // ignore self
-      console.log('Found service:', service.name);
+      console.log('Found service:', service.name, 'addresses:', service.addresses);
       
-      // Prefer IPv4 addresses to avoid IPv6 link-local connection timeouts
-      const ipv4 = service.addresses.find(ip => net.isIPv4(ip));
-      const targetIp = ipv4 || service.addresses[0];
+      let hostsToTry = [];
       
-      this.connectTo(targetIp, service.port);
+      // Node.js requires scope IDs for IPv6 link-local (fe80) addresses on macOS.
+      // We append %awdl0 (Wi-Fi Direct/AirDrop) and %en0 (Wi-Fi) to ensure routing works.
+      for (const ip of service.addresses) {
+        if (ip.includes('%')) {
+          hostsToTry.push(ip);
+        } else if (ip.startsWith('fe80:')) {
+          hostsToTry.push(`${ip}%awdl0`); // Peer-to-Peer
+          hostsToTry.push(`${ip}%en0`);   // Standard Wi-Fi
+        } else {
+          hostsToTry.push(ip); // IPv4 or global IPv6
+        }
+      }
+      
+      // Prioritize AWDL (Wi-Fi Direct) interfaces first, then IPv4, then others
+      hostsToTry.sort((a, b) => {
+        const aIsAwdl = a.includes('%awdl0');
+        const bIsAwdl = b.includes('%awdl0');
+        if (aIsAwdl && !bIsAwdl) return -1;
+        if (!aIsAwdl && bIsAwdl) return 1;
+        
+        const aIsV4 = net.isIPv4(a);
+        const bIsV4 = net.isIPv4(b);
+        if (aIsV4 && !bIsV4) return -1;
+        if (!aIsV4 && bIsV4) return 1;
+        
+        return 0;
+      });
+
+      // Remove duplicates
+      hostsToTry = [...new Set(hostsToTry)];
+      
+      this.connectTo(hostsToTry, service.port);
       browser.stop();
     });
   }
 
-  connectTo(host, port) {
+  connectTo(hosts, port) {
+    if (!Array.isArray(hosts)) hosts = [hosts];
+    if (hosts.length === 0) {
+      console.log('All connection attempts failed.');
+      if (this.onClientDisconnected) this.onClientDisconnected();
+      return;
+    }
+    
+    const host = hosts.shift();
     console.log(`Connecting to ${host}:${port}...`);
-    this.client = net.createConnection({ host, port }, () => {
-      console.log('Connected to peer!');
+    
+    const client = net.createConnection({ host, port }, () => {
+      console.log(`Connected to peer via ${host}!`);
+      this.client = client;
+      client.setTimeout(0); // Remove connection timeout
       if (this.onClientConnected) this.onClientConnected();
     });
     
-    this.client.on('error', (err) => {
-      console.error('Connection error:', err.message);
-      this.client = null;
-      if (this.onClientDisconnected) this.onClientDisconnected();
+    // Set a short timeout for connection attempts (e.g. 1500ms) so we failover quickly
+    client.setTimeout(1500);
+    
+    client.on('timeout', () => {
+      console.log(`Connection timeout for ${host}`);
+      client.destroy(); // This will trigger 'close'
     });
-    this.client.on('end', () => {
-      console.log('Disconnected from peer');
-      this.client = null;
-      if (this.onClientDisconnected) this.onClientDisconnected();
+
+    client.on('error', (err) => {
+      console.error(`Connection error for ${host}:`, err.message);
+      // 'close' will be emitted automatically after 'error'
+    });
+    
+    client.on('close', () => {
+      if (this.client === client) {
+        // We were successfully connected, but now disconnected
+        console.log('Disconnected from peer');
+        this.client = null;
+        if (this.onClientDisconnected) this.onClientDisconnected();
+      } else {
+        // We never fully connected, try the next address
+        this.connectTo(hosts, port);
+      }
     });
   }
 
