@@ -1,9 +1,12 @@
+#import <AppKit/AppKit.h>
 #include <napi.h>
 #include <IOKit/hid/IOHIDManager.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <Foundation/Foundation.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <ApplicationServices/ApplicationServices.h>
+#include <IOKit/hidsystem/ev_keymap.h>
+#include <IOKit/hidsystem/IOLLEvent.h>
 #include <iostream>
 #include <thread>
 
@@ -76,6 +79,7 @@ Napi::Value GetDevices(const Napi::CallbackInfo& info) {
 
 Napi::ThreadSafeFunction tsfn;
 bool is_intercepting = false;
+int current_shortcut = 1; // 1 = Cmd+Option+E, 2 = Eject
 CFMachPortRef eventTap = NULL;
 CFRunLoopSourceRef runLoopSource = NULL;
 
@@ -95,23 +99,38 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
         return event;
     }
 
-    // Toggle logic: Cmd + Option + E (keyCode 14)
-    if (type == kCGEventKeyDown) {
+    if (current_shortcut == 2 && type == NX_SYSDEFINED) {
+        NSEvent *nsEvent = [NSEvent eventWithCGEvent:event];
+        if (nsEvent.type == NSEventTypeSystemDefined && nsEvent.subtype == NX_SUBTYPE_AUX_CONTROL_BUTTONS) {
+            int keyCode = (nsEvent.data1 & 0xFFFF0000) >> 16;
+            int keyFlags = (nsEvent.data1 & 0x0000FFFF);
+            bool isKeyDown = (((keyFlags & 0xFF00) >> 8) == 0xA);
+            
+            if (keyCode == NX_KEYTYPE_EJECT && isKeyDown) {
+                is_intercepting = !is_intercepting;
+                EventData* ed = new EventData{ -1, is_intercepting ? 1 : 0, 0, 0, 0, 0, 0 };
+                tsfn.BlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
+                    jsCallback.Call({ Napi::String::New(env, "toggle"), Napi::Boolean::New(env, value->keycode != 0) });
+                    delete value;
+                });
+                return NULL;
+            }
+        }
+    } else if (current_shortcut == 1 && type == kCGEventKeyDown) {
         CGEventFlags flags = CGEventGetFlags(event);
         int64_t keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
         if ((flags & kCGEventFlagMaskCommand) && (flags & kCGEventFlagMaskAlternate) && keycode == 14) {
             is_intercepting = !is_intercepting;
-            // Notify JS about toggle
             EventData* ed = new EventData{ -1, is_intercepting ? 1 : 0, 0, 0, 0, 0, 0 };
             tsfn.BlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
                 jsCallback.Call({ Napi::String::New(env, "toggle"), Napi::Boolean::New(env, value->keycode != 0) });
                 delete value;
             });
-            return NULL; // Block the toggle keystroke
+            return NULL;
         }
     }
 
-    if (!is_intercepting) {
+    if (!is_intercepting || type == NX_SYSDEFINED) {
         return event;
     }
 
@@ -155,7 +174,8 @@ void RunLoopThread() {
                             CGEventMaskBit(kCGEventMouseMoved) | CGEventMaskBit(kCGEventLeftMouseDragged) |
                             CGEventMaskBit(kCGEventRightMouseDragged) | CGEventMaskBit(kCGEventLeftMouseDown) |
                             CGEventMaskBit(kCGEventLeftMouseUp) | CGEventMaskBit(kCGEventRightMouseDown) |
-                            CGEventMaskBit(kCGEventRightMouseUp) | CGEventMaskBit(kCGEventScrollWheel);
+                            CGEventMaskBit(kCGEventRightMouseUp) | CGEventMaskBit(kCGEventScrollWheel) |
+                            CGEventMaskBit(NX_SYSDEFINED);
 
     eventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault, eventMask, CGEventCallback, NULL);
     
@@ -193,6 +213,13 @@ Napi::Value StartTap(const Napi::CallbackInfo& info) {
 Napi::Value SetIntercepting(const Napi::CallbackInfo& info) {
     if (info.Length() > 0 && info[0].IsBoolean()) {
         is_intercepting = info[0].As<Napi::Boolean>().Value();
+    }
+    return info.Env().Null();
+}
+
+Napi::Value SetShortcut(const Napi::CallbackInfo& info) {
+    if (info.Length() > 0 && info[0].IsNumber()) {
+        current_shortcut = info[0].As<Napi::Number>().Int32Value();
     }
     return info.Env().Null();
 }
@@ -237,6 +264,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("getDevices", Napi::Function::New(env, GetDevices));
     exports.Set("startTap", Napi::Function::New(env, StartTap));
     exports.Set("setIntercepting", Napi::Function::New(env, SetIntercepting));
+    exports.Set("setShortcut", Napi::Function::New(env, SetShortcut));
     exports.Set("injectEvent", Napi::Function::New(env, InjectEvent));
     return exports;
 }

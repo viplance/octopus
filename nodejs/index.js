@@ -1,6 +1,7 @@
 const bindings = require('bindings');
 const addon = bindings('octopussync_mac');
 const { NetworkManager } = require('./network');
+const readline = require('readline');
 
 class DeviceManager {
   constructor() {
@@ -26,22 +27,46 @@ class DeviceManager {
 module.exports = { DeviceManager };
 
 if (require.main === module) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
   console.log('--- OctopusSync Node.js ---');
   const manager = new DeviceManager();
   const devices = manager.refreshDevices();
   console.log(`Found ${devices.length} HID Devices:`);
   console.table(devices);
 
+  console.log('\nSelect the shortcut to toggle OctopusSync:');
+  console.log('1) Cmd + Option + E (Recommended)');
+  console.log('2) Eject Key');
+  rl.question('Choice (1 or 2): ', (answer) => {
+    rl.close();
+    const choice = answer.trim() === '2' ? 2 : 1;
+    addon.setShortcut(choice);
+    startApplication(choice);
+  });
+}
+
+function startApplication(shortcutChoice) {
   console.log('\n--- Setup Network & Input ---');
   let isIntercepting = false;
   
   const network = new NetworkManager(
     (event) => {
-      // Received event from peer, inject it into the local system
       addon.injectEvent(event);
     },
     () => {
-      console.log('Network connected! Press Cmd + Option + E to toggle sync.');
+      console.log(`Network connected! Press ${shortcutChoice === 2 ? 'Eject' : 'Cmd + Option + E'} to toggle sync.`);
+    },
+    () => {
+      console.log('\nNetwork connection lost.');
+      if (isIntercepting) {
+        console.log('Returning keyboard and mouse control back to the local Mac.');
+        isIntercepting = false;
+        addon.setIntercepting(false);
+      }
     }
   );
 
@@ -53,7 +78,6 @@ if (require.main === module) {
       isIntercepting = event;
       console.log(`\nSync is now ${isIntercepting ? 'ACTIVE (Inputs intercepted)' : 'INACTIVE (Inputs normal)'}`);
     } else if (type === 'event') {
-      // Intercepted a local event, send it to the peer
       network.sendEvent(event);
     }
   });

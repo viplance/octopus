@@ -3,9 +3,10 @@ const { Bonjour } = require('bonjour-service');
 const os = require('os');
 
 class NetworkManager {
-  constructor(onEventReceived, onClientConnected) {
+  constructor(onEventReceived, onClientConnected, onClientDisconnected) {
     this.onEventReceived = onEventReceived;
     this.onClientConnected = onClientConnected;
+    this.onClientDisconnected = onClientDisconnected;
     this.server = null;
     this.client = null;
     this.bonjour = new Bonjour();
@@ -27,7 +28,14 @@ class NetworkManager {
         } catch (e) { }
       });
 
-      socket.on('end', () => console.log('Client disconnected'));
+      socket.on('end', () => {
+        console.log('Client disconnected from server.');
+        if (this.onClientDisconnected) this.onClientDisconnected();
+      });
+      socket.on('error', (err) => {
+        console.error('Client socket error:', err.message);
+        if (this.onClientDisconnected) this.onClientDisconnected();
+      });
     });
 
     this.server.listen(this.port, '0.0.0.0', () => {
@@ -63,10 +71,13 @@ class NetworkManager {
     
     this.client.on('error', (err) => {
       console.error('Connection error:', err.message);
+      this.client = null;
+      if (this.onClientDisconnected) this.onClientDisconnected();
     });
     this.client.on('end', () => {
       console.log('Disconnected from peer');
       this.client = null;
+      if (this.onClientDisconnected) this.onClientDisconnected();
     });
   }
 

@@ -29,7 +29,8 @@
               "-framework CoreFoundation",
               "-framework Foundation",
               "-framework ApplicationServices",
-              "-framework CoreGraphics"
+              "-framework CoreGraphics",
+              "-framework AppKit"
             ]
           }
         }]
