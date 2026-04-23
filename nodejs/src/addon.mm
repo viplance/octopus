@@ -296,6 +296,30 @@ Napi::Value InjectEvent(const Napi::CallbackInfo& info) {
         currentLoc.x += deltaX;
         currentLoc.y += deltaY;
         
+        // Clamp to screen bounds to prevent cursor from going out of screen
+        uint32_t displayCount;
+        CGGetActiveDisplayList(0, NULL, &displayCount);
+        CGDirectDisplayID* activeDisplays = new CGDirectDisplayID[displayCount];
+        CGGetActiveDisplayList(displayCount, activeDisplays, &displayCount);
+        
+        CGRect totalBounds = CGRectNull;
+        for (uint32_t i = 0; i < displayCount; i++) {
+            CGRect bounds = CGDisplayBounds(activeDisplays[i]);
+            if (CGRectIsNull(totalBounds)) {
+                totalBounds = bounds;
+            } else {
+                totalBounds = CGRectUnion(totalBounds, bounds);
+            }
+        }
+        delete[] activeDisplays;
+        
+        if (!CGRectIsNull(totalBounds)) {
+            if (currentLoc.x < CGRectGetMinX(totalBounds)) currentLoc.x = CGRectGetMinX(totalBounds);
+            if (currentLoc.x >= CGRectGetMaxX(totalBounds)) currentLoc.x = CGRectGetMaxX(totalBounds) - 1;
+            if (currentLoc.y < CGRectGetMinY(totalBounds)) currentLoc.y = CGRectGetMinY(totalBounds);
+            if (currentLoc.y >= CGRectGetMaxY(totalBounds)) currentLoc.y = CGRectGetMaxY(totalBounds) - 1;
+        }
+        
         CGMouseButton btn = (CGMouseButton)mouseButton;
         if (type == kCGEventMouseMoved || type == kCGEventLeftMouseDragged) btn = kCGMouseButtonLeft;
         else if (type == kCGEventRightMouseDragged) btn = kCGMouseButtonRight;

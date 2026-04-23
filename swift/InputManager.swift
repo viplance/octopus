@@ -100,6 +100,23 @@ class InputManager {
                 var mouseLoc = CGEvent(source: nil)?.location ?? .zero
                 mouseLoc.x += dx
                 mouseLoc.y += dy
+                
+                // Clamp to screen bounds
+                var displayCount: UInt32 = 0
+                CGGetActiveDisplayList(0, nil, &displayCount)
+                var activeDisplays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+                CGGetActiveDisplayList(displayCount, &activeDisplays, &displayCount)
+                
+                var totalBounds = CGRect.null
+                for display in activeDisplays {
+                    let bounds = CGDisplayBounds(display)
+                    totalBounds = totalBounds.isNull ? bounds : totalBounds.union(bounds)
+                }
+                
+                if !totalBounds.isNull {
+                    mouseLoc.x = max(totalBounds.minX, min(mouseLoc.x, totalBounds.maxX - 1))
+                    mouseLoc.y = max(totalBounds.minY, min(mouseLoc.y, totalBounds.maxY - 1))
+                }
                 let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: mouseLoc, mouseButton: .left)
                 moveEvent?.post(tap: .cghidEventTap)
             }
