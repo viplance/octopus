@@ -17,6 +17,8 @@ class InputManager {
             UInt64(1) << CGEventType.keyDown.rawValue,
             UInt64(1) << CGEventType.keyUp.rawValue,
             UInt64(1) << CGEventType.mouseMoved.rawValue,
+            UInt64(1) << CGEventType.leftMouseDragged.rawValue,
+            UInt64(1) << CGEventType.rightMouseDragged.rawValue,
             UInt64(1) << CGEventType.leftMouseDown.rawValue,
             UInt64(1) << CGEventType.leftMouseUp.rawValue,
             UInt64(1) << CGEventType.rightMouseDown.rawValue,
@@ -74,20 +76,6 @@ class InputManager {
         var inputEvent: InputEvent?
         
         switch type {
-        case .mouseMoved:
-            let dx = event.getDoubleValueField(.mouseEventDeltaX)
-            let dy = event.getDoubleValueField(.mouseEventDeltaY)
-            inputEvent = InputEvent(type: .mouseMove, dx: dx, dy: dy, button: nil, keyCode: nil, isDown: nil, rawData: nil)
-        case .leftMouseDown, .rightMouseDown:
-            let button = type == .leftMouseDown ? 0 : 1
-            inputEvent = InputEvent(type: .mouseClick, dx: nil, dy: nil, button: button, keyCode: nil, isDown: true, rawData: nil)
-        case .leftMouseUp, .rightMouseUp:
-            let button = type == .leftMouseUp ? 0 : 1
-            inputEvent = InputEvent(type: .mouseClick, dx: nil, dy: nil, button: button, keyCode: nil, isDown: false, rawData: nil)
-        case .scrollWheel:
-            let dy = event.getDoubleValueField(.scrollWheelEventDeltaAxis1)
-            let dx = event.getDoubleValueField(.scrollWheelEventDeltaAxis2)
-            inputEvent = InputEvent(type: .scroll, dx: dx, dy: dy, button: nil, keyCode: nil, isDown: nil, rawData: nil)
         case .keyDown:
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
             inputEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: true, rawData: nil)
@@ -95,7 +83,7 @@ class InputManager {
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
             inputEvent = InputEvent(type: .keyUp, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: false, rawData: nil)
         default:
-            // For gestures and NX_SYSDEFINED, simply serialize the event to raw binary data
+            // For scroll wheels, gestures and NX_SYSDEFINED, simply serialize the event to raw binary data
             if let data = event.data {
                 inputEvent = InputEvent(type: .raw, dx: nil, dy: nil, button: nil, keyCode: nil, isDown: nil, rawData: data as Data)
             }
@@ -112,61 +100,57 @@ class InputManager {
         case .raw:
             if let data = event.rawData as CFData? {
                 if let rawEvent = CGEvent(withDataAllocator: kCFAllocatorDefault, data: data) {
+                    let rawType = rawEvent.type
+                    let currentLocEvent = CGEvent(source: nil)
+                    var currentLoc = currentLocEvent?.location ?? .zero
+                    
+                    if rawType == .mouseMoved || rawType == .leftMouseDragged || rawType == .rightMouseDragged ||
+                       rawType == .leftMouseDown || rawType == .leftMouseUp || rawType == .rightMouseDown || rawType == .rightMouseUp {
+                        
+                        var dx: Double = 0
+                        var dy: Double = 0
+                        
+                        if rawType == .mouseMoved || rawType == .leftMouseDragged || rawType == .rightMouseDragged {
+                            dx = rawEvent.getDoubleValueField(.mouseEventDeltaX)
+                            dy = rawEvent.getDoubleValueField(.mouseEventDeltaY)
+                        }
+                        
+                        currentLoc.x += dx
+                        currentLoc.y += dy
+                        
+                        // Clamp to screen bounds
+                        var displayCount: UInt32 = 0
+                        CGGetActiveDisplayList(0, nil, &displayCount)
+                        var activeDisplays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+                        CGGetActiveDisplayList(displayCount, &activeDisplays, &displayCount)
+                        
+                        var totalBounds = CGRect.null
+                        for display in activeDisplays {
+                            let bounds = CGDisplayBounds(display)
+                            totalBounds = totalBounds.isNull ? bounds : totalBounds.union(bounds)
+                        }
+                        
+                        if !totalBounds.isNull {
+                            currentLoc.x = max(totalBounds.minX, min(currentLoc.x, totalBounds.maxX - 1))
+                            currentLoc.y = max(totalBounds.minY, min(currentLoc.y, totalBounds.maxY - 1))
+                        }
+                        
+                        if rawType == .leftMouseDown || rawType == .leftMouseUp || rawType == .rightMouseDown || rawType == .rightMouseUp {
+                            rawEvent.setIntegerValueField(.mouseEventClickState, value: 1)
+                        }
+                    }
+                    
+                    rawEvent.location = currentLoc
                     rawEvent.post(tap: .cghidEventTap)
                 }
             }
-        case .mouseMove:
-            if let dx = event.dx, let dy = event.dy {
-                var mouseLoc = CGEvent(source: nil)?.location ?? .zero
-                mouseLoc.x += dx
-                mouseLoc.y += dy
-                
-                // Clamp to screen bounds
-                var displayCount: UInt32 = 0
-                CGGetActiveDisplayList(0, nil, &displayCount)
-                var activeDisplays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-                CGGetActiveDisplayList(displayCount, &activeDisplays, &displayCount)
-                
-                var totalBounds = CGRect.null
-                for display in activeDisplays {
-                    let bounds = CGDisplayBounds(display)
-                    totalBounds = totalBounds.isNull ? bounds : totalBounds.union(bounds)
-                }
-                
-                if !totalBounds.isNull {
-                    mouseLoc.x = max(totalBounds.minX, min(mouseLoc.x, totalBounds.maxX - 1))
-                    mouseLoc.y = max(totalBounds.minY, min(mouseLoc.y, totalBounds.maxY - 1))
-                }
-                let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: mouseLoc, mouseButton: .left)
-                moveEvent?.post(tap: .cghidEventTap)
-            }
-        case .mouseClick:
-            if let button = event.button, let isDown = event.isDown {
-                let mouseLoc = CGEvent(source: nil)?.location ?? .zero
-                let type: CGEventType
-                let mouseButton: CGMouseButton
-                if button == 0 {
-                    type = isDown ? .leftMouseDown : .leftMouseUp
-                    mouseButton = .left
-                } else {
-                    type = isDown ? .rightMouseDown : .rightMouseUp
-                    mouseButton = .right
-                }
-                let clickEvent = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: mouseLoc, mouseButton: mouseButton)
-                // Fix window selection bug by explicitly setting the click state
-                clickEvent?.setIntegerValueField(.mouseEventClickState, value: 1)
-                clickEvent?.post(tap: .cghidEventTap)
-            }
-        case .scroll:
-             if let dy = event.dy {
-                 let scrollEvent = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: Int32(dy), wheel2: 0, wheel3: 0)
-                 scrollEvent?.post(tap: .cghidEventTap)
-             }
         case .keyDown, .keyUp:
             if let keyCode = event.keyCode, let isDown = event.isDown {
                 let keyEvent = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: isDown)
                 keyEvent?.post(tap: .cghidEventTap)
             }
+        default:
+            break
         }
     }
 }

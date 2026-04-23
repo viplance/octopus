@@ -86,6 +86,15 @@ class NetworkManager: ObservableObject {
         browser?.start(queue: .main)
     }
     
+    private func restartBrowsing() {
+        browser?.cancel()
+        browser = nil
+        // Delay slightly before restarting to avoid rapid looping
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.startBrowsing()
+        }
+    }
+    
     private func setupConnection(_ connection: NWConnection) {
         self.connection = connection
         
@@ -98,9 +107,11 @@ class NetworkManager: ObservableObject {
                 print("Connection failed: \(error)")
                 DispatchQueue.main.async { self?.connectionStatus = .disconnected }
                 self?.connection = nil
+                self?.restartBrowsing()
             case .cancelled:
                 DispatchQueue.main.async { self?.connectionStatus = .disconnected }
                 self?.connection = nil
+                self?.restartBrowsing()
             default:
                 break
             }

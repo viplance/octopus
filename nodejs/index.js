@@ -69,6 +69,11 @@ function startApplication(shortcutChoice, shareKeyboard, shareMouse) {
         isIntercepting = false;
         addon.setIntercepting(false);
       }
+      
+      console.log('Attempting to reconnect...');
+      setTimeout(() => {
+        network.startDiscovery();
+      }, 2000);
     }
   );
 

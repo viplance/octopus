@@ -160,19 +160,11 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
     if (type == kCGEventKeyDown || type == kCGEventKeyUp) {
         ed->keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
         ed->flags = CGEventGetFlags(event);
-    } else if (type == kCGEventMouseMoved || type == kCGEventLeftMouseDragged || type == kCGEventRightMouseDragged) {
-        // Send Deltas instead of absolute coordinates!
-        ed->mouseX = CGEventGetDoubleValueField(event, kCGMouseEventDeltaX);
-        ed->mouseY = CGEventGetDoubleValueField(event, kCGMouseEventDeltaY);
-        CGWarpMouseCursorPosition(saved_cursor_position);
-    } else if (type == kCGEventLeftMouseDown || type == kCGEventLeftMouseUp || type == kCGEventRightMouseDown || type == kCGEventRightMouseUp) {
-        ed->mouseX = 0;
-        ed->mouseY = 0;
-        ed->mouseButton = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
-    } else if (type == kCGEventScrollWheel) {
-        ed->scrollWheel = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1);
     } else {
-        // Gestures and NX_SYSDEFINED
+        if (type == kCGEventMouseMoved || type == kCGEventLeftMouseDragged || type == kCGEventRightMouseDragged) {
+            CGWarpMouseCursorPosition(saved_cursor_position);
+        }
+        // Scroll wheel, Mouse Moves, Clicks, Gestures and NX_SYSDEFINED
         CFDataRef data = CGEventCreateData(kCFAllocatorDefault, event);
         if (data) {
             ed->rawData = std::string((const char*)CFDataGetBytePtr(data), CFDataGetLength(data));
@@ -296,6 +288,56 @@ Napi::Value InjectEvent(const Napi::CallbackInfo& info) {
             CFDataRef data = CFDataCreate(kCFAllocatorDefault, buffer.Data(), buffer.Length());
             if (data) {
                 event = CGEventCreateFromData(kCFAllocatorDefault, data);
+                
+                CGEventType rawType = CGEventGetType(event);
+                CGEventRef currentLocEvent = CGEventCreate(NULL);
+                CGPoint currentLoc = CGEventGetLocation(currentLocEvent);
+                CFRelease(currentLocEvent);
+                
+                if (rawType == kCGEventMouseMoved || rawType == kCGEventLeftMouseDragged || rawType == kCGEventRightMouseDragged ||
+                    rawType == kCGEventLeftMouseDown || rawType == kCGEventLeftMouseUp || rawType == kCGEventRightMouseDown || rawType == kCGEventRightMouseUp) {
+                    
+                    double dx = 0;
+                    double dy = 0;
+                    
+                    if (rawType == kCGEventMouseMoved || rawType == kCGEventLeftMouseDragged || rawType == kCGEventRightMouseDragged) {
+                        dx = CGEventGetDoubleValueField(event, kCGMouseEventDeltaX);
+                        dy = CGEventGetDoubleValueField(event, kCGMouseEventDeltaY);
+                    }
+                    
+                    currentLoc.x += dx;
+                    currentLoc.y += dy;
+                    
+                    // Clamp to screen bounds
+                    uint32_t displayCount;
+                    CGGetActiveDisplayList(0, NULL, &displayCount);
+                    CGDirectDisplayID* activeDisplays = new CGDirectDisplayID[displayCount];
+                    CGGetActiveDisplayList(displayCount, activeDisplays, &displayCount);
+                    
+                    CGRect totalBounds = CGRectNull;
+                    for (uint32_t i = 0; i < displayCount; i++) {
+                        CGRect bounds = CGDisplayBounds(activeDisplays[i]);
+                        if (CGRectIsNull(totalBounds)) {
+                            totalBounds = bounds;
+                        } else {
+                            totalBounds = CGRectUnion(totalBounds, bounds);
+                        }
+                    }
+                    delete[] activeDisplays;
+                    
+                    if (!CGRectIsNull(totalBounds)) {
+                        if (currentLoc.x < CGRectGetMinX(totalBounds)) currentLoc.x = CGRectGetMinX(totalBounds);
+                        if (currentLoc.x >= CGRectGetMaxX(totalBounds)) currentLoc.x = CGRectGetMaxX(totalBounds) - 1;
+                        if (currentLoc.y < CGRectGetMinY(totalBounds)) currentLoc.y = CGRectGetMinY(totalBounds);
+                        if (currentLoc.y >= CGRectGetMaxY(totalBounds)) currentLoc.y = CGRectGetMaxY(totalBounds) - 1;
+                    }
+                    
+                    if (rawType == kCGEventLeftMouseDown || rawType == kCGEventRightMouseDown || rawType == kCGEventLeftMouseUp || rawType == kCGEventRightMouseUp) {
+                        CGEventSetIntegerValueField(event, kCGMouseEventClickState, 1);
+                    }
+                }
+                
+                CGEventSetLocation(event, currentLoc);
                 CFRelease(data);
             }
         }
@@ -304,60 +346,6 @@ Napi::Value InjectEvent(const Napi::CallbackInfo& info) {
         int64_t flags = obj.Get("flags").As<Napi::Number>().Int64Value();
         event = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)keycode, type == kCGEventKeyDown);
         if (event) CGEventSetFlags(event, (CGEventFlags)flags);
-    } else if (type == kCGEventMouseMoved || type == kCGEventLeftMouseDragged || type == kCGEventRightMouseDragged ||
-               type == kCGEventLeftMouseDown || type == kCGEventLeftMouseUp || type == kCGEventRightMouseDown || type == kCGEventRightMouseUp) {
-        
-        double deltaX = obj.Get("mouseX").As<Napi::Number>().DoubleValue();
-        double deltaY = obj.Get("mouseY").As<Napi::Number>().DoubleValue();
-        int64_t mouseButton = obj.Get("mouseButton").As<Napi::Number>().Int64Value();
-        
-        // Compute new position based on CURRENT local mouse position
-        CGEventRef currentLocEvent = CGEventCreate(NULL);
-        CGPoint currentLoc = CGEventGetLocation(currentLocEvent);
-        CFRelease(currentLocEvent);
-        
-        currentLoc.x += deltaX;
-        currentLoc.y += deltaY;
-        
-        // Clamp to screen bounds to prevent cursor from going out of screen
-        uint32_t displayCount;
-        CGGetActiveDisplayList(0, NULL, &displayCount);
-        CGDirectDisplayID* activeDisplays = new CGDirectDisplayID[displayCount];
-        CGGetActiveDisplayList(displayCount, activeDisplays, &displayCount);
-        
-        CGRect totalBounds = CGRectNull;
-        for (uint32_t i = 0; i < displayCount; i++) {
-            CGRect bounds = CGDisplayBounds(activeDisplays[i]);
-            if (CGRectIsNull(totalBounds)) {
-                totalBounds = bounds;
-            } else {
-                totalBounds = CGRectUnion(totalBounds, bounds);
-            }
-        }
-        delete[] activeDisplays;
-        
-        if (!CGRectIsNull(totalBounds)) {
-            if (currentLoc.x < CGRectGetMinX(totalBounds)) currentLoc.x = CGRectGetMinX(totalBounds);
-            if (currentLoc.x >= CGRectGetMaxX(totalBounds)) currentLoc.x = CGRectGetMaxX(totalBounds) - 1;
-            if (currentLoc.y < CGRectGetMinY(totalBounds)) currentLoc.y = CGRectGetMinY(totalBounds);
-            if (currentLoc.y >= CGRectGetMaxY(totalBounds)) currentLoc.y = CGRectGetMaxY(totalBounds) - 1;
-        }
-        
-        CGMouseButton btn = (CGMouseButton)mouseButton;
-        if (type == kCGEventMouseMoved || type == kCGEventLeftMouseDragged) btn = kCGMouseButtonLeft;
-        else if (type == kCGEventRightMouseDragged) btn = kCGMouseButtonRight;
-        
-        event = CGEventCreateMouseEvent(NULL, (CGEventType)type, currentLoc, btn);
-        
-        if (event) {
-            CGEventSetDoubleValueField(event, kCGMouseEventDeltaX, deltaX);
-            CGEventSetDoubleValueField(event, kCGMouseEventDeltaY, deltaY);
-            // Fix window selection bug by explicitly setting the click state
-            CGEventSetIntegerValueField(event, kCGMouseEventClickState, 1);
-        }
-    } else if (type == kCGEventScrollWheel) {
-        int64_t scrollWheel = obj.Get("scrollWheel").As<Napi::Number>().Int64Value();
-        event = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 1, (int32_t)scrollWheel);
     }
 
     if (event) {
