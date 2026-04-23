@@ -1,0 +1,6 @@
+1. The application should be set up on 2 macbooks with modern MacOS using the same Wi-Fi network, AirDrop, Handoff, Bluetooth or Ethernet (find the fast and simple solution).
+2. The application should detect an external bluetooth keyboard, mouse or touchpad devices connected to one of the macbooks.
+3. It should show the list of all available devices in GUI (terminal or desktop app).
+4. The application should send the keyboard/mouse/touchpad actions to the second macbook and reproduce them there.
+5. There should be a setting to switch the application on/off with shorcut (`Eject` key by default).
+6. You can use NodeJS, Swift or other modern platform. The solution should be easy to set up on new macbook. By default it should start automatically on mac startup.

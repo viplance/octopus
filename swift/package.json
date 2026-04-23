@@ -1,0 +1,10 @@
+{
+  "name": "octopussync",
+  "version": "1.0.0",
+  "description": "OctopusSync macOS Application",
+  "scripts": {
+    "build": "rm -rf build && xcodebuild -project OctopusSync.xcodeproj -scheme OctopusSync -configuration Release CONFIGURATION_BUILD_DIR=$PWD/build",
+    "dmg": "rm -rf build/dmg && mkdir -p build/dmg && cp -R build/OctopusSync.app build/dmg && ln -s /Applications build/dmg/Applications && hdiutil create -volname \"OctopusSync\" -srcfolder build/dmg -ov -format UDZO build/OctopusSync.dmg && rm -rf build/dmg",
+    "dist": "pnpm run build && pnpm run dmg"
+  }
+}
