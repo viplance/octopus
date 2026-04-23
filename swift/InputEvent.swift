@@ -7,6 +7,7 @@ struct InputEvent: Codable, Sendable {
     let button: Int?
     let keyCode: Int?
     let isDown: Bool?
+    let rawData: Data?
     
     enum EventType: Int, Codable, Sendable {
         case mouseMove
@@ -14,5 +15,6 @@ struct InputEvent: Codable, Sendable {
         case scroll
         case keyDown
         case keyUp
+        case raw
     }
 }

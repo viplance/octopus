@@ -23,6 +23,9 @@ class NetworkManager {
           const messages = data.toString().split('\n').filter(m => m);
           for (const msg of messages) {
             const event = JSON.parse(msg);
+            if (typeof event.rawData === 'string') {
+              event.rawData = Buffer.from(event.rawData, 'base64');
+            }
             this.onEventReceived(event);
           }
         } catch (e) { }
@@ -137,6 +140,9 @@ class NetworkManager {
 
   sendEvent(event) {
     if (this.client && !this.client.destroyed) {
+      if (event.rawData && Buffer.isBuffer(event.rawData)) {
+        event.rawData = event.rawData.toString('base64');
+      }
       this.client.write(JSON.stringify(event) + '\n');
     }
   }

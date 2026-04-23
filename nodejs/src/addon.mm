@@ -92,6 +92,7 @@ struct EventData {
     double mouseY;
     int64_t mouseButton;
     int64_t scrollWheel;
+    std::string rawData;
 };
 
 CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void* refcon) {
@@ -118,7 +119,7 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
                     CGWarpMouseCursorPosition(saved_cursor_position);
                 }
 
-                EventData* ed = new EventData{ -1, is_intercepting ? 1 : 0, 0, 0, 0, 0, 0 };
+                EventData* ed = new EventData{ -1, is_intercepting ? 1 : 0, 0, 0, 0, 0, 0, "" };
                 tsfn.NonBlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
                     jsCallback.Call({ Napi::String::New(env, "toggle"), Napi::Boolean::New(env, value->keycode != 0) });
                     delete value;
@@ -140,7 +141,7 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
                 CGWarpMouseCursorPosition(saved_cursor_position);
             }
 
-            EventData* ed = new EventData{ -1, is_intercepting ? 1 : 0, 0, 0, 0, 0, 0 };
+            EventData* ed = new EventData{ -1, is_intercepting ? 1 : 0, 0, 0, 0, 0, 0, "" };
             tsfn.NonBlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
                 jsCallback.Call({ Napi::String::New(env, "toggle"), Napi::Boolean::New(env, value->keycode != 0) });
                 delete value;
@@ -149,12 +150,12 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
         }
     }
 
-    if (!is_intercepting || type == NX_SYSDEFINED) {
+    if (!is_intercepting) {
         return event;
     }
 
     // Block logic: do not forward event to macOS, instead send to JS via NonBlockingCall to avoid tap timeouts
-    EventData* ed = new EventData{ (int)type, 0, 0, 0, 0, 0, 0 };
+    EventData* ed = new EventData{ (int)type, 0, 0, 0, 0, 0, 0, "" };
     
     if (type == kCGEventKeyDown || type == kCGEventKeyUp) {
         ed->keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
@@ -170,6 +171,14 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
         ed->mouseButton = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
     } else if (type == kCGEventScrollWheel) {
         ed->scrollWheel = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1);
+    } else {
+        // Gestures and NX_SYSDEFINED
+        CFDataRef data = CGEventCreateData(kCFAllocatorDefault, event);
+        if (data) {
+            ed->rawData = std::string((const char*)CFDataGetBytePtr(data), CFDataGetLength(data));
+            CFRelease(data);
+        }
+        ed->type = -2; // special type for raw events
     }
 
     tsfn.NonBlockingCall(ed, [](Napi::Env env, Napi::Function jsCallback, EventData* value) {
@@ -181,6 +190,9 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
         obj.Set("mouseY", value->mouseY);
         obj.Set("mouseButton", value->mouseButton);
         obj.Set("scrollWheel", value->scrollWheel);
+        if (!value->rawData.empty()) {
+            obj.Set("rawData", Napi::Buffer<char>::Copy(env, value->rawData.data(), value->rawData.length()));
+        }
         jsCallback.Call({ Napi::String::New(env, "event"), obj });
         delete value;
     });
@@ -202,7 +214,9 @@ void RunLoopThread() {
         eventMask |= CGEventMaskBit(kCGEventMouseMoved) | CGEventMaskBit(kCGEventLeftMouseDragged) |
                      CGEventMaskBit(kCGEventRightMouseDragged) | CGEventMaskBit(kCGEventLeftMouseDown) |
                      CGEventMaskBit(kCGEventLeftMouseUp) | CGEventMaskBit(kCGEventRightMouseDown) |
-                     CGEventMaskBit(kCGEventRightMouseUp) | CGEventMaskBit(kCGEventScrollWheel);
+                     CGEventMaskBit(kCGEventRightMouseUp) | CGEventMaskBit(kCGEventScrollWheel) |
+                     CGEventMaskBit(29) | CGEventMaskBit(30) | CGEventMaskBit(31) | 
+                     CGEventMaskBit(18) | CGEventMaskBit(19) | CGEventMaskBit(20) | CGEventMaskBit(32);
     }
 
     eventTap = CGEventTapCreate(kCGHIDEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault, eventMask, CGEventCallback, NULL);
@@ -276,7 +290,16 @@ Napi::Value InjectEvent(const Napi::CallbackInfo& info) {
     
     CGEventRef event = NULL;
     
-    if (type == kCGEventKeyDown || type == kCGEventKeyUp) {
+    if (type == -2) {
+        if (obj.Has("rawData") && obj.Get("rawData").IsBuffer()) {
+            Napi::Buffer<uint8_t> buffer = obj.Get("rawData").As<Napi::Buffer<uint8_t>>();
+            CFDataRef data = CFDataCreate(kCFAllocatorDefault, buffer.Data(), buffer.Length());
+            if (data) {
+                event = CGEventCreateFromData(kCFAllocatorDefault, data);
+                CFRelease(data);
+            }
+        }
+    } else if (type == kCGEventKeyDown || type == kCGEventKeyUp) {
         int64_t keycode = obj.Get("keycode").As<Napi::Number>().Int64Value();
         int64_t flags = obj.Get("flags").As<Napi::Number>().Int64Value();
         event = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)keycode, type == kCGEventKeyDown);
@@ -329,6 +352,8 @@ Napi::Value InjectEvent(const Napi::CallbackInfo& info) {
         if (event) {
             CGEventSetDoubleValueField(event, kCGMouseEventDeltaX, deltaX);
             CGEventSetDoubleValueField(event, kCGMouseEventDeltaY, deltaY);
+            // Fix window selection bug by explicitly setting the click state
+            CGEventSetIntegerValueField(event, kCGMouseEventClickState, 1);
         }
     } else if (type == kCGEventScrollWheel) {
         int64_t scrollWheel = obj.Get("scrollWheel").As<Napi::Number>().Int64Value();

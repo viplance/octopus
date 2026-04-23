@@ -13,14 +13,25 @@ class InputManager {
         // In a full implementation, we would selectively filter based on device ID.
         // For standard CGEventTap, it's global. We capture user input and suppress it locally.
         
-        let eventMask = (1 << CGEventType.keyDown.rawValue) |
-                        (1 << CGEventType.keyUp.rawValue) |
-                        (1 << CGEventType.mouseMoved.rawValue) |
-                        (1 << CGEventType.leftMouseDown.rawValue) |
-                        (1 << CGEventType.leftMouseUp.rawValue) |
-                        (1 << CGEventType.rightMouseDown.rawValue) |
-                        (1 << CGEventType.rightMouseUp.rawValue) |
-                        (1 << CGEventType.scrollWheel.rawValue)
+        let eventTypes: [UInt64] = [
+            UInt64(1) << CGEventType.keyDown.rawValue,
+            UInt64(1) << CGEventType.keyUp.rawValue,
+            UInt64(1) << CGEventType.mouseMoved.rawValue,
+            UInt64(1) << CGEventType.leftMouseDown.rawValue,
+            UInt64(1) << CGEventType.leftMouseUp.rawValue,
+            UInt64(1) << CGEventType.rightMouseDown.rawValue,
+            UInt64(1) << CGEventType.rightMouseUp.rawValue,
+            UInt64(1) << CGEventType.scrollWheel.rawValue,
+            UInt64(1) << 14, // NX_SYSDEFINED (volume, media)
+            UInt64(1) << 29, // NSEventTypeGesture
+            UInt64(1) << 30, // NSEventTypeMagnify
+            UInt64(1) << 31, // NSEventTypeSwipe
+            UInt64(1) << 18, // NSEventTypeRotate
+            UInt64(1) << 19, // NSEventTypeBeginGesture
+            UInt64(1) << 20, // NSEventTypeEndGesture
+            UInt64(1) << 32  // NSEventTypeSmartMagnify
+        ]
+        let eventMask = eventTypes.reduce(0, |)
         
         let callback: CGEventTapCallBack = { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
             guard let manager = refcon?.assumingMemoryBound(to: InputManager.self).pointee else {
@@ -29,7 +40,6 @@ class InputManager {
             
             manager.handleCapturedEvent(event: event, type: type)
             
-            // Return nil to suppress the event locally
             return nil
         }
         
@@ -67,24 +77,28 @@ class InputManager {
         case .mouseMoved:
             let dx = event.getDoubleValueField(.mouseEventDeltaX)
             let dy = event.getDoubleValueField(.mouseEventDeltaY)
-            inputEvent = InputEvent(type: .mouseMove, dx: dx, dy: dy, button: nil, keyCode: nil, isDown: nil)
+            inputEvent = InputEvent(type: .mouseMove, dx: dx, dy: dy, button: nil, keyCode: nil, isDown: nil, rawData: nil)
         case .leftMouseDown, .rightMouseDown:
             let button = type == .leftMouseDown ? 0 : 1
-            inputEvent = InputEvent(type: .mouseClick, dx: nil, dy: nil, button: button, keyCode: nil, isDown: true)
+            inputEvent = InputEvent(type: .mouseClick, dx: nil, dy: nil, button: button, keyCode: nil, isDown: true, rawData: nil)
         case .leftMouseUp, .rightMouseUp:
             let button = type == .leftMouseUp ? 0 : 1
-            inputEvent = InputEvent(type: .mouseClick, dx: nil, dy: nil, button: button, keyCode: nil, isDown: false)
+            inputEvent = InputEvent(type: .mouseClick, dx: nil, dy: nil, button: button, keyCode: nil, isDown: false, rawData: nil)
         case .scrollWheel:
             let dy = event.getDoubleValueField(.scrollWheelEventDeltaAxis1)
             let dx = event.getDoubleValueField(.scrollWheelEventDeltaAxis2)
-            inputEvent = InputEvent(type: .scroll, dx: dx, dy: dy, button: nil, keyCode: nil, isDown: nil)
+            inputEvent = InputEvent(type: .scroll, dx: dx, dy: dy, button: nil, keyCode: nil, isDown: nil, rawData: nil)
         case .keyDown:
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
-            inputEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: true)
+            inputEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: true, rawData: nil)
         case .keyUp:
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
-            inputEvent = InputEvent(type: .keyUp, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: false)
+            inputEvent = InputEvent(type: .keyUp, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: false, rawData: nil)
         default:
+            // For gestures and NX_SYSDEFINED, simply serialize the event to raw binary data
+            if let data = event.data {
+                inputEvent = InputEvent(type: .raw, dx: nil, dy: nil, button: nil, keyCode: nil, isDown: nil, rawData: data as Data)
+            }
             break
         }
         
@@ -95,6 +109,12 @@ class InputManager {
     
     func injectEvent(_ event: InputEvent) {
         switch event.type {
+        case .raw:
+            if let data = event.rawData as CFData? {
+                if let rawEvent = CGEvent(withDataAllocator: kCFAllocatorDefault, data: data) {
+                    rawEvent.post(tap: .cghidEventTap)
+                }
+            }
         case .mouseMove:
             if let dx = event.dx, let dy = event.dy {
                 var mouseLoc = CGEvent(source: nil)?.location ?? .zero
@@ -133,6 +153,8 @@ class InputManager {
                     mouseButton = .right
                 }
                 let clickEvent = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: mouseLoc, mouseButton: mouseButton)
+                // Fix window selection bug by explicitly setting the click state
+                clickEvent?.setIntegerValueField(.mouseEventClickState, value: 1)
                 clickEvent?.post(tap: .cghidEventTap)
             }
         case .scroll:
