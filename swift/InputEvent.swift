@@ -7,6 +7,7 @@ struct InputEvent: Codable, Sendable {
     let button: Int?
     let keyCode: Int?
     let isDown: Bool?
+    let flags: UInt64?
     let rawData: Data?
     
     enum EventType: Int, Codable, Sendable {

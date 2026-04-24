@@ -31,7 +31,8 @@ class InputManager {
             UInt64(1) << 18, // NSEventTypeRotate
             UInt64(1) << 19, // NSEventTypeBeginGesture
             UInt64(1) << 20, // NSEventTypeEndGesture
-            UInt64(1) << 32  // NSEventTypeSmartMagnify
+            UInt64(1) << 32, // NSEventTypeSmartMagnify
+            UInt64(1) << CGEventType.flagsChanged.rawValue
         ]
         let eventMask = eventTypes.reduce(0, |)
         
@@ -78,10 +79,12 @@ class InputManager {
         switch type {
         case .keyDown:
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
-            inputEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: true, rawData: nil)
+            let flags = event.flags.rawValue
+            inputEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: true, flags: flags, rawData: nil)
         case .keyUp:
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
-            inputEvent = InputEvent(type: .keyUp, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: false, rawData: nil)
+            let flags = event.flags.rawValue
+            inputEvent = InputEvent(type: .keyUp, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: false, flags: flags, rawData: nil)
         default:
             // For scroll wheels, gestures and NX_SYSDEFINED, simply serialize the event to raw binary data
             if let data = event.data {
@@ -145,6 +148,9 @@ class InputManager {
         case .keyDown, .keyUp:
             if let keyCode = event.keyCode, let isDown = event.isDown {
                 let keyEvent = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: isDown)
+                if let flags = event.flags {
+                    keyEvent?.flags = CGEventFlags(rawValue: flags)
+                }
                 keyEvent?.post(tap: .cghidEventTap)
             }
         default:

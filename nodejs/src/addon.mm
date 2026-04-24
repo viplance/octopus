@@ -199,7 +199,7 @@ void RunLoopThread() {
     CGEventMask eventMask = CGEventMaskBit(NX_SYSDEFINED);
     
     if (global_share_keyboard) {
-        eventMask |= CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp);
+        eventMask |= CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) | CGEventMaskBit(kCGEventFlagsChanged);
     }
     
     if (global_share_mouse) {
