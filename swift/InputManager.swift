@@ -135,9 +135,7 @@ class InputManager {
                             currentLoc.y = max(totalBounds.minY, min(currentLoc.y, totalBounds.maxY - 1))
                         }
                         
-                        if rawType == .leftMouseDown || rawType == .leftMouseUp || rawType == .rightMouseDown || rawType == .rightMouseUp {
-                            rawEvent.setIntegerValueField(.mouseEventClickState, value: 1)
-                        }
+
                     }
                     
                     rawEvent.location = currentLoc

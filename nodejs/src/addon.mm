@@ -332,9 +332,7 @@ Napi::Value InjectEvent(const Napi::CallbackInfo& info) {
                         if (currentLoc.y >= CGRectGetMaxY(totalBounds)) currentLoc.y = CGRectGetMaxY(totalBounds) - 1;
                     }
                     
-                    if (rawType == kCGEventLeftMouseDown || rawType == kCGEventRightMouseDown || rawType == kCGEventLeftMouseUp || rawType == kCGEventRightMouseUp) {
-                        CGEventSetIntegerValueField(event, kCGMouseEventClickState, 1);
-                    }
+
                 }
                 
                 CGEventSetLocation(event, currentLoc);
