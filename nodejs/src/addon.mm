@@ -7,6 +7,9 @@
 #include <ApplicationServices/ApplicationServices.h>
 #include <IOKit/hidsystem/ev_keymap.h>
 #include <IOKit/hidsystem/IOLLEvent.h>
+#include <IOKit/IOKitLib.h>
+#include <IOKit/hid/IOHIDLib.h>
+#include <IOKit/hid/IOHIDUsageTables.h>
 #include <iostream>
 #include <thread>
 
@@ -16,59 +19,62 @@
 
 Napi::Value GetDevices(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
+    Napi::Array result = Napi::Array::New(env);
+    uint32_t index = 0;
 
-    IOHIDManagerRef hidManager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
-    if (!hidManager) {
-        Napi::Error::New(env, "Failed to create IOHIDManager").ThrowAsJavaScriptException();
-        return env.Null();
+    CFMutableDictionaryRef matchingDict = IOServiceMatching(kIOHIDDeviceKey);
+    if (!matchingDict) return result;
+
+    io_iterator_t iter;
+    if (IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, &iter) != kIOReturnSuccess) {
+        return result;
     }
 
-    NSMutableArray *criteria = [NSMutableArray array];
-    
-    NSDictionary *keyboardDict = @{ @kIOHIDDeviceUsagePageKey: @(kHIDPage_GenericDesktop), @kIOHIDDeviceUsageKey: @(kHIDUsage_GD_Keyboard) };
-    [criteria addObject:keyboardDict];
+    io_service_t device;
+    while ((device = IOIteratorNext(iter))) {
+        CFStringRef nameRef = (CFStringRef)IORegistryEntryCreateCFProperty(device, CFSTR(kIOHIDProductKey), kCFAllocatorDefault, 0);
+        char buffer[256];
+        std::string name = "Unknown Device";
+        if (nameRef && CFStringGetCString(nameRef, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+            name = buffer;
+        }
+        if (nameRef) CFRelease(nameRef);
 
-    NSDictionary *mouseDict = @{ @kIOHIDDeviceUsagePageKey: @(kHIDPage_GenericDesktop), @kIOHIDDeviceUsageKey: @(kHIDUsage_GD_Mouse) };
-    [criteria addObject:mouseDict];
+        CFNumberRef usagePageRef = (CFNumberRef)IORegistryEntryCreateCFProperty(device, CFSTR(kIOHIDPrimaryUsagePageKey), kCFAllocatorDefault, 0);
+        int usagePage = 0;
+        if (usagePageRef) {
+            CFNumberGetValue(usagePageRef, kCFNumberIntType, &usagePage);
+            CFRelease(usagePageRef);
+        }
 
-    NSDictionary *pointerDict = @{ @kIOHIDDeviceUsagePageKey: @(kHIDPage_GenericDesktop), @kIOHIDDeviceUsageKey: @(kHIDUsage_GD_Pointer) };
-    [criteria addObject:pointerDict];
+        CFNumberRef usageRef = (CFNumberRef)IORegistryEntryCreateCFProperty(device, CFSTR(kIOHIDPrimaryUsageKey), kCFAllocatorDefault, 0);
+        int usage = 0;
+        if (usageRef) {
+            CFNumberGetValue(usageRef, kCFNumberIntType, &usage);
+            CFRelease(usageRef);
+        }
 
-    IOHIDManagerSetDeviceMatchingMultiple(hidManager, (__bridge CFArrayRef)criteria);
+        std::string type = "other";
+        if (usagePage == kHIDPage_GenericDesktop) {
+            if (usage == kHIDUsage_GD_Keyboard) type = "keyboard";
+            else if (usage == kHIDUsage_GD_Mouse) type = "mouse";
+            else if (usage == kHIDUsage_GD_Pointer) type = "touchpad";
+        }
 
-    NSSet *hidDevicesSet = CFBridgingRelease(IOHIDManagerCopyDevices(hidManager));
-    
-    Napi::Array result = Napi::Array::New(env);
-    
-    if (hidDevicesSet) {
-        uint32_t index = 0;
-        for (id deviceObj in hidDevicesSet) {
-            IOHIDDeviceRef device = (__bridge IOHIDDeviceRef)deviceObj;
-            NSString *nameStr = (__bridge NSString *)IOHIDDeviceGetProperty(device, CFSTR(kIOHIDProductKey));
-            std::string name = nameStr ? [nameStr UTF8String] : "Unknown Device";
-            NSNumber *usagePageNum = (__bridge NSNumber *)IOHIDDeviceGetProperty(device, CFSTR(kIOHIDPrimaryUsagePageKey));
-            int usagePage = usagePageNum ? [usagePageNum intValue] : 0;
-            NSNumber *usageNum = (__bridge NSNumber *)IOHIDDeviceGetProperty(device, CFSTR(kIOHIDPrimaryUsageKey));
-            int usage = usageNum ? [usageNum intValue] : 0;
-            
-            std::string type = "other";
-            if (usagePage == kHIDPage_GenericDesktop) {
-                if (usage == kHIDUsage_GD_Keyboard) type = "keyboard";
-                else if (usage == kHIDUsage_GD_Mouse) type = "mouse";
-                else if (usage == kHIDUsage_GD_Pointer) type = "touchpad";
-            }
-            
+        // Filter to only include keyboard, mouse, touchpad
+        if (type != "other") {
             Napi::Object devObj = Napi::Object::New(env);
             devObj.Set("name", name);
             devObj.Set("type", type);
             devObj.Set("usagePage", usagePage);
             devObj.Set("usage", usage);
-            
             result[index++] = devObj;
         }
-    }
 
-    CFRelease(hidManager);
+        IOObjectRelease(device);
+    }
+    IOObjectRelease(iter);
+
     return result;
 }
 
