@@ -2,6 +2,34 @@ const net = require('net');
 const { Bonjour } = require('bonjour-service');
 const os = require('os');
 
+// Warn when both peers are on the same subnet but connected via a routed IPv4
+// address — this means traffic is going through the router instead of directly,
+// which adds bufferbloat and causes latency spikes.
+function warnIfRouted(remoteHost, localAddr) {
+  if (!net.isIPv4(remoteHost)) return; // link-local IPv6 is always direct
+
+  const ifaces = os.networkInterfaces();
+  for (const addrs of Object.values(ifaces)) {
+    for (const a of (addrs || [])) {
+      if (a.family !== 'IPv4' || a.internal) continue;
+      if (a.address === localAddr) {
+        // Check if remote is in the same /24 subnet (same LAN)
+        const localNet  = a.address.split('.').slice(0, 3).join('.');
+        const remoteNet = remoteHost.split('.').slice(0, 3).join('.');
+        if (localNet === remoteNet) {
+          console.warn(
+            '\n⚠  WARNING: Connected via IPv4 through the router (' + remoteHost + ').\n' +
+            '   Both Macs are on the same LAN but traffic is routed, not direct.\n' +
+            '   This causes bufferbloat and latency spikes (up to 1-2 seconds).\n' +
+            '   Fix: enable AirDrop on both Macs so the link-local IPv6 path works.\n'
+          );
+        }
+        return;
+      }
+    }
+  }
+}
+
 class NetworkManager {
   constructor(onEventReceived, onClientConnected, onClientDisconnected) {
     this.onEventReceived = onEventReceived;
@@ -51,44 +79,44 @@ class NetworkManager {
   startDiscovery() {
     console.log('Searching for other OctopusSync instances...');
     const browser = this.bonjour.find({ type: 'octopussync' });
-    
+
     browser.on('up', (service) => {
       if (service.name === this.serviceName) return; // ignore self
       console.log('Found service:', service.name, 'addresses:', service.addresses);
-      
+
       let hostsToTry = [];
-      
+
       // Node.js requires scope IDs for IPv6 link-local (fe80) addresses on macOS.
-      // We append %awdl0 (Wi-Fi Direct/AirDrop) and %en0 (Wi-Fi) to ensure routing works.
+      // Only %en0 is used — Bonjour never advertises the peer's awdl0 address,
+      // so appending %awdl0 always fails with EHOSTUNREACH.
       for (const ip of service.addresses) {
         if (ip.includes('%')) {
           hostsToTry.push(ip);
         } else if (ip.startsWith('fe80:')) {
-          hostsToTry.push(`${ip}%awdl0`); // Peer-to-Peer
-          hostsToTry.push(`${ip}%en0`);   // Standard Wi-Fi
+          hostsToTry.push(`${ip}%en0`); // link-local via Wi-Fi interface
         } else {
           hostsToTry.push(ip); // IPv4 or global IPv6
         }
       }
-      
-      // Prioritize AWDL (Wi-Fi Direct) interfaces first, then IPv4, then others
+
+      // Prioritize link-local IPv6 (direct, no router) then IPv4 (through router)
       hostsToTry.sort((a, b) => {
-        const aIsAwdl = a.includes('%awdl0');
-        const bIsAwdl = b.includes('%awdl0');
-        if (aIsAwdl && !bIsAwdl) return -1;
-        if (!aIsAwdl && bIsAwdl) return 1;
-        
+        const aIsLinkLocal = a.startsWith('fe80:') || a.includes('%en0');
+        const bIsLinkLocal = b.startsWith('fe80:') || b.includes('%en0');
+        if (aIsLinkLocal && !bIsLinkLocal) return -1;
+        if (!aIsLinkLocal && bIsLinkLocal) return 1;
+
         const aIsV4 = net.isIPv4(a);
         const bIsV4 = net.isIPv4(b);
         if (aIsV4 && !bIsV4) return -1;
         if (!aIsV4 && bIsV4) return 1;
-        
+
         return 0;
       });
 
       // Remove duplicates
       hostsToTry = [...new Set(hostsToTry)];
-      
+
       this.connectTo(hostsToTry, service.port);
       browser.stop();
     });
@@ -101,20 +129,21 @@ class NetworkManager {
       if (this.onClientDisconnected) this.onClientDisconnected();
       return;
     }
-    
+
     const host = hosts.shift();
     console.log(`Connecting to ${host}:${port}...`);
-    
+
     const client = net.createConnection({ host, port }, () => {
       console.log(`Connected to peer via ${host}!`);
       this.client = client;
       client.setTimeout(0); // Remove connection timeout
+      warnIfRouted(host, client.localAddress);
       if (this.onClientConnected) this.onClientConnected();
     });
-    
-    // Set a short timeout for connection attempts (e.g. 1500ms) so we failover quickly
+
+    // Set a short timeout for connection attempts so we failover quickly
     client.setTimeout(1500);
-    
+
     client.on('timeout', () => {
       console.log(`Connection timeout for ${host}`);
       client.destroy(); // This will trigger 'close'
@@ -124,7 +153,7 @@ class NetworkManager {
       console.error(`Connection error for ${host}:`, err.message);
       // 'close' will be emitted automatically after 'error'
     });
-    
+
     client.on('close', () => {
       if (this.client === client) {
         // We were successfully connected, but now disconnected

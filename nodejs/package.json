@@ -6,7 +6,9 @@
   "scripts": {
     "build": "node-gyp configure build",
     "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start:instrumented": "node index-instrumented.js",
+    "diag:receiver": "node latency-diag.js receiver",
+    "diag:sender": "node latency-diag.js sender"
   },
   "keywords": [],
   "author": "",

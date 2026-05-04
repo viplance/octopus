@@ -238,18 +238,19 @@ function buildCandidates(addresses, port) {
     if (ip.includes('%')) {
       candidates.push(ip);
     } else if (ip.startsWith('fe80:')) {
-      candidates.push(`${ip}%awdl0`);
+      // Only %en0 — Bonjour never advertises the peer's awdl0 address,
+      // so %awdl0 always fails with EHOSTUNREACH.
       candidates.push(`${ip}%en0`);
     } else {
       candidates.push(ip);
     }
   }
-  // Prioritize AWDL > IPv4 > rest (same logic as main app)
+  // Prioritize link-local IPv6 (direct, no router) then IPv4 (through router)
   candidates.sort((a, b) => {
-    const aw = a.includes('%awdl0');
-    const bw = b.includes('%awdl0');
-    if (aw && !bw) return -1;
-    if (!aw && bw) return 1;
+    const aLL = a.includes('%en0');
+    const bLL = b.includes('%en0');
+    if (aLL && !bLL) return -1;
+    if (!aLL && bLL) return 1;
     const av4 = net.isIPv4(a);
     const bv4 = net.isIPv4(b);
     if (av4 && !bv4) return -1;
@@ -275,6 +276,7 @@ function tryConnect(candidates, port) {
     log(`Connected via ${host}`);
     socket.setTimeout(0);
     logSocketInfo(socket, 'outgoing');
+    warnIfRouted(host, socket.localAddress);
     runPingSession(socket, candidates, port);
   });
 
@@ -371,6 +373,31 @@ function startReceiverWithBonjour() {
   bonjour.publish({ name: hostname, type: SERVICE_TYPE, port: PORT });
   log(`Published Bonjour service as "${hostname}"`);
   startReceiver();
+}
+
+// ─── Routing quality check ────────────────────────────────────────────────────
+function warnIfRouted(remoteHost, localAddr) {
+  if (!net.isIPv4(remoteHost)) return; // link-local IPv6 is always direct
+
+  const ifaces = os.networkInterfaces();
+  for (const addrs of Object.values(ifaces)) {
+    for (const a of (addrs || [])) {
+      if (a.family !== 'IPv4' || a.internal) continue;
+      if (a.address === localAddr) {
+        const localNet  = a.address.split('.').slice(0, 3).join('.');
+        const remoteNet = remoteHost.split('.').slice(0, 3).join('.');
+        if (localNet === remoteNet) {
+          log(
+            '\n⚠  WARNING: Connected via IPv4 through the router (' + remoteHost + ').\n' +
+            '   Both Macs are on the same LAN but traffic goes router → peer.\n' +
+            '   This causes bufferbloat and latency spikes (measured up to 1.6s).\n' +
+            '   Fix: enable AirDrop on both Macs — the fe80%en0 direct path will be used instead.\n'
+          );
+        }
+        return;
+      }
+    }
+  }
 }
 
 // ─── Log socket-level info ────────────────────────────────────────────────────

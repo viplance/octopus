@@ -26,3 +26,19 @@ Choose your preferred implementation to get started:
 - **For the Node.js CLI:** Navigate to the `/nodejs` directory and see the [Node.js README](./nodejs/README.md) for installation and build instructions.
 
 *Note: Both implementations require explicit `Accessibility` and `Input Monitoring` permissions in macOS System Settings due to their low-level hardware access.*
+
+## Latency Diagnostics (Node.js)
+
+If you experience input lag or freezes between the two MacBooks, the Node.js implementation includes diagnostic tools to pinpoint the cause.
+
+Run on **Mac B** first:
+```bash
+cd nodejs && pnpm diag:receiver
+```
+
+Then run on **Mac A**:
+```bash
+pnpm diag:sender
+```
+
+This performs a 200-ping round-trip test and prints a full RTT report (min / p50 / p90 / p99 / max) with spike detection. For live per-event stats during normal use, run `pnpm start:instrumented` instead of `pnpm start`. See the [Node.js README](./nodejs/README.md#latency-diagnostics) for details.
