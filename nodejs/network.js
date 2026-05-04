@@ -45,6 +45,7 @@ class NetworkManager {
   startServer() {
     this.server = net.createServer((socket) => {
       console.log('Client connected from:', socket.remoteAddress);
+      socket.setNoDelay(true); // Disable Nagle — send each event immediately
       
       socket.on('data', (data) => {
         try {
@@ -137,6 +138,7 @@ class NetworkManager {
       console.log(`Connected to peer via ${host}!`);
       this.client = client;
       client.setTimeout(0); // Remove connection timeout
+      client.setNoDelay(true); // Disable Nagle — send each event immediately
       warnIfRouted(host, client.localAddress);
       if (this.onClientConnected) this.onClientConnected();
     });
