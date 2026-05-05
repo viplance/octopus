@@ -9,6 +9,7 @@ struct InputEvent: Codable, Sendable {
     let isDown: Bool?
     let flags: UInt64?
     let rawData: Data?
+    let control: String? // Added for focus switching (e.g. "gainFocus")
     
     enum EventType: Int, Codable, Sendable {
         case mouseMove
