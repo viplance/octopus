@@ -10,9 +10,11 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var appState: AppState
     @State private var showingPermissionsAlert = false
+    @State private var showMonitorSetup = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // ── Header ──────────────────────────────────────────────────────
             HStack {
                 Text("OctopusSync")
                     .font(.headline)
@@ -29,6 +31,7 @@ struct ContentView: View {
 
             Divider()
 
+            // ── Devices ──────────────────────────────────────────────────────
             VStack(alignment: .leading, spacing: 8) {
                 Text("Devices")
                     .font(.caption)
@@ -58,6 +61,12 @@ struct ContentView: View {
 
             Divider()
 
+            // ── Monitor switching ─────────────────────────────────────────────
+            MonitorSectionView(monitor: appState.monitorManager)
+
+            Divider()
+
+            // ── Global toggles ────────────────────────────────────────────────
             Toggle("Launch at Login", isOn: Binding(
                 get: { appState.launchAtLogin },
                 set: { _ in appState.toggleLaunchAtLogin() }
@@ -66,7 +75,7 @@ struct ContentView: View {
 
             Toggle("Sharing Active", isOn: Binding(
                 get: { appState.isSharingActive },
-                set: { _ in 
+                set: { _ in
                     if PermissionsHelper.checkAndPromptAccessibilityPermission() {
                         appState.toggleSharing()
                     } else {
@@ -79,15 +88,16 @@ struct ContentView: View {
 
             Divider()
 
+            // ── Footer ────────────────────────────────────────────────────────
             HStack {
                 Button("Quit") {
                     NSApplication.shared.terminate(nil)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .foregroundColor(.red)
-                
+
                 Spacer()
-                
+
                 Button(action: {
                     if appState.connectionStatus == .disconnected {
                         appState.networkManager.start()
@@ -100,7 +110,7 @@ struct ContentView: View {
             }
         }
         .padding()
-        .frame(width: 250)
+        .frame(width: 290)
         .alert(isPresented: $showingPermissionsAlert) {
             Alert(
                 title: Text("Accessibility Access Required"),
@@ -128,13 +138,156 @@ struct ContentView: View {
         case .connected: return .green
         }
     }
-    
+
     private func iconForDevice(_ type: BluetoothDevice.DeviceType) -> String {
         switch type {
         case .keyboard: return "keyboard"
         case .mouse: return "computermouse"
         case .touchpad: return "magicmouse"
         case .other: return "questionmark.circle"
+        }
+    }
+}
+
+// MARK: - Monitor Section
+
+struct MonitorSectionView: View {
+    @ObservedObject var monitor: MonitorManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Monitor Switch")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { monitor.config.enabled },
+                    set: { monitor.config.enabled = $0 }
+                ))
+                .toggleStyle(SwitchToggleStyle(tint: .orange))
+                .labelsHidden()
+            }
+
+            if monitor.config.enabled {
+                // Token input
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("SmartThings Token")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    SecureField("Personal Access Token", text: Binding(
+                        get: { monitor.config.personalAccessToken },
+                        set: { monitor.config.personalAccessToken = $0 }
+                    ))
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .font(.caption2)
+                }
+
+                // Discover monitors button
+                HStack {
+                    Button(action: { monitor.discoverDevices() }) {
+                        HStack(spacing: 4) {
+                            if monitor.isQuerying {
+                                ProgressView().scaleEffect(0.6)
+                            } else {
+                                Image(systemName: "magnifyingglass")
+                            }
+                            Text("Detect Monitors")
+                        }
+                    }
+                    .disabled(monitor.isQuerying || monitor.config.personalAccessToken.isEmpty)
+                    .font(.caption)
+
+                    Spacer()
+                }
+
+                // Device picker (auto-populated after detection)
+                if !monitor.detectedDevices.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Monitor Device")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Picker("", selection: Binding(
+                            get: { monitor.config.deviceId },
+                            set: {
+                                monitor.config.deviceId = $0
+                                monitor.fetchSupportedInputSources()
+                            }
+                        )) {
+                            ForEach(monitor.detectedDevices) { device in
+                                Text(device.label).tag(device.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(MenuPickerStyle())
+                    }
+                } else if !monitor.config.deviceId.isEmpty {
+                    // Manual device ID when auto-detection was not used
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Device ID (manual)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        TextField("SmartThings Device ID", text: Binding(
+                            get: { monitor.config.deviceId },
+                            set: { monitor.config.deviceId = $0 }
+                        ))
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .font(.caption2)
+                    }
+                } else {
+                    // Prompt to either detect or enter manually
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Device ID (manual)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        TextField("SmartThings Device ID", text: Binding(
+                            get: { monitor.config.deviceId },
+                            set: { monitor.config.deviceId = $0 }
+                        ))
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .font(.caption2)
+                    }
+                }
+
+                // Input source picker
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("This Mac's Input")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button(action: { monitor.fetchSupportedInputSources() }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption2)
+                        }
+                        .disabled(monitor.isQuerying || monitor.config.deviceId.isEmpty)
+                        .help("Refresh supported input sources from monitor")
+                    }
+                    Picker("", selection: Binding(
+                        get: { monitor.config.myInputSource },
+                        set: { monitor.config.myInputSource = $0 }
+                    )) {
+                        ForEach(monitor.availableInputSources, id: \.self) { source in
+                            Text(source).tag(source)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(MenuPickerStyle())
+
+                    Text("Monitor switches to this input when you toggle sync ON.")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                // Error display
+                if let err = monitor.lastError {
+                    Text(err)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 const bindings = require('bindings');
 const addon = bindings('octopussync_mac');
 const { NetworkManager } = require('./network');
+const { MonitorManager } = require('./monitor');
 const readline = require('readline');
 
 class DeviceManager {
@@ -29,38 +30,70 @@ module.exports = { DeviceManager };
 if (require.main === module) {
   const rl = readline.createInterface({
     input: process.stdin,
-    output: process.stdout
+    output: process.stdout,
   });
 
-  console.log('--- OctopusSync Node.js ---');
-  const manager = new DeviceManager();
-  const devices = manager.refreshDevices();
-  console.log(`Found ${devices.length} HID Devices:`);
-  console.table(devices);
+  const ask = (q) => new Promise((res) => rl.question(q, (a) => res(a.trim())));
 
-  console.log('\nSelect the shortcut to toggle OctopusSync:');
-  console.log('1) Eject Key (Default)');
-  console.log('2) Cmd + Option + E');
-  rl.question('Choice (1 or 2, press Enter for 1): ', (answer) => {
+  (async () => {
+    console.log('─── OctopusSync Node.js ───');
+
+    // ── Devices ────────────────────────────────────────────────────────────
+    const manager = new DeviceManager();
+    const devices = manager.refreshDevices();
+    console.log(`\nFound ${devices.length} HID Devices:`);
+    console.table(devices);
+
+    // ── Shortcut ───────────────────────────────────────────────────────────
+    console.log('\nSelect the shortcut to toggle OctopusSync:');
+    console.log('1) Eject Key (Default)');
+    console.log('2) Cmd + Option + E');
+    const shortcutAnswer = await ask('Choice (1 or 2, press Enter for 1): ');
+    // C++ Addon: 1 = Cmd+Option+E, 2 = Eject
+    const shortcutChoice = shortcutAnswer === '2' ? 1 : 2;
+    addon.setShortcut(shortcutChoice);
+
+    // ── Monitor switch setup ───────────────────────────────────────────────
+    const monitorManager = new MonitorManager();
+
+    if (monitorManager.isEnabled) {
+      console.log(`\nMonitor switch: enabled (source: ${monitorManager.config.myInputSource})`);
+      const reconfigure = await ask('Reconfigure monitor switch? (y/N): ');
+      if (reconfigure.toLowerCase() === 'y') {
+        await monitorManager.setup(rl);
+      }
+    } else {
+      console.log('\n─── Monitor Switch (Samsung M7/M8 via SmartThings) ───');
+      console.log('When you toggle OctopusSync ON, the monitor can automatically');
+      console.log('switch its input source to this Mac.\n');
+      const wantMonitor = await ask('Set up monitor switching? (y/N): ');
+      if (wantMonitor.toLowerCase() === 'y') {
+        await monitorManager.setup(rl);
+      } else {
+        console.log('Skipping monitor switch setup. Run again to set it up later.');
+      }
+    }
+
     rl.close();
-    // In C++ Addon: 1 = Cmd+Option+E, 2 = Eject
-    const choice = answer.trim() === '2' ? 1 : 2;
-    addon.setShortcut(choice);
-    // We share all by default since per-device filtering is not possible
-    startApplication(choice, true, true);
-  });
+
+    startApplication(shortcutChoice, monitorManager);
+  })();
 }
 
-function startApplication(shortcutChoice, shareKeyboard, shareMouse) {
-  console.log('\n--- Setup Network & Input ---');
+function startApplication(shortcutChoice, monitorManager) {
+  console.log('\n─── Setup Network & Input ───');
   let isIntercepting = false;
-  
+
   const network = new NetworkManager(
     (event) => {
       addon.injectEvent(event);
     },
     () => {
-      console.log(`Network connected! Press ${shortcutChoice === 2 ? 'Eject' : 'Cmd + Option + E'} to toggle sync.`);
+      const shortcutLabel = shortcutChoice === 2 ? 'Eject' : 'Cmd + Option + E';
+      console.log(`Network connected! Press ${shortcutLabel} to toggle sync.`);
+      if (monitorManager.isEnabled) {
+        console.log(`Monitor switch enabled — source: ${monitorManager.config.myInputSource}`);
+      }
     },
     () => {
       console.log('\nNetwork connection lost.');
@@ -69,7 +102,6 @@ function startApplication(shortcutChoice, shareKeyboard, shareMouse) {
         isIntercepting = false;
         addon.setIntercepting(false);
       }
-      
       console.log('Attempting to reconnect...');
       setTimeout(() => {
         network.startDiscovery();
@@ -80,14 +112,19 @@ function startApplication(shortcutChoice, shareKeyboard, shareMouse) {
   network.startServer();
   network.startDiscovery();
 
-  addon.startTap((type, event) => {
+  addon.startTap(async (type, event) => {
     if (type === 'toggle') {
       isIntercepting = event;
       console.log(`\nSync is now ${isIntercepting ? 'ACTIVE (Inputs intercepted)' : 'INACTIVE (Inputs normal)'}`);
+
+      if (isIntercepting) {
+        // This Mac just gained input focus — switch monitor to this Mac's source.
+        await monitorManager.switchToThisMac();
+      }
     } else if (type === 'event') {
       network.sendEvent(event);
     }
-  }, shareKeyboard, shareMouse);
+  }, true, true);
 
   console.log('Note: To intercept events, ensure your terminal has Accessibility permissions in System Settings -> Privacy & Security.');
   console.log('Waiting for peer connections via Bonjour...');
