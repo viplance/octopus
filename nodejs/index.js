@@ -84,32 +84,14 @@ function startApplication(shortcutChoice, monitorManager) {
   console.log('\n─── Setup Network & Input ───');
   let isIntercepting = false;
 
-  let lastReceiveTime = 0;
-  const RECEIVE_SWITCH_COOLDOWN = 10000; // 10 seconds
+  // The monitor must always show the Mac that owns the shared input. Each Mac
+  // tracks its own isIntercepting and switches the monitor locally when it
+  // becomes the owner. The receiver never touches the monitor — that avoided
+  // the cross-talk that caused the old gainFocus/fallback dance to flap.
 
   const network = new NetworkManager(
-    async (event) => {
-      // Handle explicit focus request from peer
-      if (event.control === 'gainFocus') {
-        if (monitorManager.isEnabled) {
-          console.log(`\nPeer requested monitor focus — switching to this Mac (${monitorManager.config.myInputSource})...`);
-          await monitorManager.switchToThisMac();
-        }
-        return;
-      }
-
+    (event) => {
       addon.injectEvent(event);
-
-      // Fallback: If we are receiving events but didn't get a control message,
-      // still ensure monitor is on this Mac (with cooldown).
-      const now = Date.now();
-      if (now - lastReceiveTime > RECEIVE_SWITCH_COOLDOWN) {
-        if (monitorManager.isEnabled) {
-          console.log(`\nPeer activity detected — switching monitor to this Mac (${monitorManager.config.myInputSource})...`);
-          await monitorManager.switchToThisMac();
-        }
-      }
-      lastReceiveTime = now;
     },
     () => {
       const shortcutLabel = shortcutChoice === 2 ? 'Eject' : 'Cmd + Option + E';
@@ -124,9 +106,11 @@ function startApplication(shortcutChoice, monitorManager) {
         console.log('Returning keyboard and mouse control back to the local Mac.');
         isIntercepting = false;
         addon.setIntercepting(false);
-        // Regain focus locally
-        monitorManager.switchToThisMac();
       }
+      // Whether or not we were intercepting, this Mac now owns its own input
+      // again, so make sure the monitor shows us. Fire-and-forget — the
+      // reconnect timer below shouldn't wait on SmartThings.
+      monitorManager.switchToThisMac();
       console.log('Attempting to reconnect...');
       setTimeout(() => {
         network.startDiscovery();
@@ -137,18 +121,15 @@ function startApplication(shortcutChoice, monitorManager) {
   network.startServer();
   network.startDiscovery();
 
-  addon.startTap(async (type, event) => {
+  addon.startTap((type, event) => {
     if (type === 'toggle') {
       isIntercepting = event;
       console.log(`\nSync is now ${isIntercepting ? 'ACTIVE (Inputs intercepted)' : 'INACTIVE (Inputs normal)'}`);
-
-      if (isIntercepting) {
-        // We are moving focus to the peer — tell them to switch the monitor.
-        network.sendEvent({ control: 'gainFocus' });
-      } else {
-        // We are returning focus to this Mac — switch the monitor back.
-        await monitorManager.switchToThisMac();
-      }
+      // In both directions this Mac is now the input owner: when turning sync
+      // ON we just grabbed the keyboard/mouse, when turning OFF we just
+      // released them back to ourselves. Either way, the monitor should show
+      // us. Fire-and-forget to keep the input pipe responsive.
+      monitorManager.switchToThisMac();
     } else if (type === 'event') {
       network.sendEvent(event);
     }

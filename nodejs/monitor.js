@@ -36,6 +36,13 @@ function saveConfig(cfg) {
 
 // ── Low-level SmartThings HTTP helper ─────────────────────────────────────────
 
+class HttpError extends Error {
+  constructor(status, body) {
+    super(`SmartThings HTTP ${status}: ${String(body).slice(0, 200)}`);
+    this.status = status;
+  }
+}
+
 function stRequest(method, path, token, body) {
   return new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : undefined;
@@ -57,7 +64,7 @@ function stRequest(method, path, token, body) {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           try { resolve(JSON.parse(data)); } catch { resolve({}); }
         } else {
-          reject(new Error(`SmartThings HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
+          reject(new HttpError(res.statusCode, data));
         }
       });
     });
@@ -67,6 +74,14 @@ function stRequest(method, path, token, body) {
     if (payload) req.write(payload);
     req.end();
   });
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 404/422 mean this capability name is wrong for this device — try the other one.
+// Everything else (5xx, network errors, timeouts) is transient and worth retrying.
+function isCapabilityMismatch(err) {
+  return err instanceof HttpError && (err.status === 404 || err.status === 422);
 }
 
 // ── Device discovery ──────────────────────────────────────────────────────────
@@ -88,12 +103,9 @@ async function discoverMonitors(token) {
   }).map((d) => ({ id: d.deviceId, name: d.name, label: d.label || d.name }));
 }
 
-/**
- * Fetches the list of supported input source strings for a given device.
- * Returns e.g. ['HDMI1', 'HDMI2', 'USB-C'] or a sensible default list.
- */
-async function fetchSupportedInputSources(token, deviceId) {
+async function fetchStatus(token, deviceId) {
   const caps = ['samsungvd.mediaInputSource', 'mediaInputSource'];
+  let lastErr;
   for (const cap of caps) {
     try {
       const status = await stRequest(
@@ -101,25 +113,51 @@ async function fetchSupportedInputSources(token, deviceId) {
         `/v1/devices/${deviceId}/components/main/capabilities/${cap}/status`,
         token
       );
-      const src = status.inputSource || status.mediaInputSource || {};
-      const supported =
-        src.supportedValues || src.supportedInputSources || src.enum || [];
-      if (supported.length > 0) return supported;
-    } catch {
-      // try next capability name
+      return { cap, status };
+    } catch (e) {
+      lastErr = e;
+      if (!isCapabilityMismatch(e)) throw e;
     }
   }
+  throw lastErr || new Error('No matching mediaInputSource capability');
+}
+
+/**
+ * Fetches the list of supported input source strings for a given device.
+ * Returns e.g. ['HDMI1', 'HDMI2', 'USB-C'] or a sensible default list.
+ */
+async function fetchSupportedInputSources(token, deviceId) {
+  try {
+    const { status } = await fetchStatus(token, deviceId);
+    const src = status.inputSource || status.mediaInputSource || {};
+    const supported = src.supportedValues || src.supportedInputSources || src.enum || [];
+    if (supported.length > 0) return supported;
+  } catch {
+    // fall through to defaults
+  }
   return ['HDMI1', 'HDMI2', 'USB-C']; // fallback defaults
+}
+
+/**
+ * Reads the monitor's currently active input source. Returns null if unknown.
+ */
+async function getCurrentInputSource(token, deviceId) {
+  const { status } = await fetchStatus(token, deviceId);
+  const src = status.inputSource || status.mediaInputSource || {};
+  return src.value || null;
 }
 
 // ── Input source switching ────────────────────────────────────────────────────
 
 /**
- * Sends a setInputSource command. Tries both capability names (Samsung-specific
- * and generic) for maximum firmware compatibility.
+ * Sends a setInputSource command once. Tries both capability names (Samsung-
+ * specific and generic) — but only falls through on capability-mismatch errors
+ * (404/422). Network/timeout/5xx errors propagate so the retry layer can handle
+ * them.
  */
-async function setInputSource(token, deviceId, source) {
+async function setInputSourceOnce(token, deviceId, source) {
   const caps = ['samsungvd.mediaInputSource', 'mediaInputSource'];
+  let lastErr;
   for (const cap of caps) {
     try {
       await stRequest('POST', `/v1/devices/${deviceId}/commands`, token, {
@@ -132,12 +170,44 @@ async function setInputSource(token, deviceId, source) {
           },
         ],
       });
-      return; // success
-    } catch {
-      // try next
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (!isCapabilityMismatch(e)) throw e;
     }
   }
-  throw new Error(`setInputSource failed for source "${source}" on device ${deviceId}`);
+  throw lastErr || new Error(`No matching capability for "${source}"`);
+}
+
+/**
+ * Sends setInputSource with retry + verify. SmartThings cloud is occasionally
+ * flaky (5xx, timeouts) and the monitor sometimes accepts the command but
+ * fails to actually switch — so we re-read the status afterward and retry if
+ * the active source doesn't match.
+ */
+async function setInputSource(token, deviceId, source, { attempts = 3, verifyDelayMs = 1500 } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await setInputSourceOnce(token, deviceId, source);
+      await sleep(verifyDelayMs);
+      let current = null;
+      try {
+        current = await getCurrentInputSource(token, deviceId);
+      } catch {
+        // verify is best-effort — if we can't read, assume the command stuck
+        return;
+      }
+      if (current === null || current === source) return;
+      lastErr = new Error(`monitor reports "${current}", expected "${source}"`);
+    } catch (e) {
+      lastErr = e;
+    }
+    if (attempt < attempts) {
+      await sleep(500 * Math.pow(3, attempt - 1)); // 500ms, 1.5s
+    }
+  }
+  throw new Error(`setInputSource "${source}" failed after ${attempts} attempts: ${lastErr ? lastErr.message : 'unknown'}`);
 }
 
 // ── Interactive setup ─────────────────────────────────────────────────────────
@@ -223,6 +293,8 @@ async function setupInteractive(rl) {
 class MonitorManager {
   constructor() {
     this.config = loadConfig();
+    this._inflight = null;
+    this._lastSwitchAt = 0;
   }
 
   get isEnabled() {
@@ -237,18 +309,35 @@ class MonitorManager {
 
   /**
    * Switch the monitor to this Mac's configured input source.
-   * Called when this Mac gains input focus (sync toggle ON).
-   * Errors are logged but never thrown — monitor switching is best-effort.
+   *
+   * - Coalesces concurrent calls: while a switch is in flight, additional
+   *   calls return the same promise instead of stacking up SmartThings
+   *   commands (which the monitor treats as a "stutter").
+   * - Debounces: if we just successfully switched within DEBOUNCE_MS, skip.
+   * - Best-effort: errors are logged, never thrown.
    */
-  async switchToThisMac() {
-    if (!this.isEnabled) return;
-    const { token, deviceId, myInputSource } = this.config;
-    try {
-      await setInputSource(token, deviceId, myInputSource);
-      console.log(`Monitor switched to ${myInputSource}`);
-    } catch (e) {
-      console.error('Monitor switch failed:', e.message);
+  switchToThisMac() {
+    if (!this.isEnabled) return Promise.resolve();
+    if (this._inflight) return this._inflight;
+
+    const DEBOUNCE_MS = 5000;
+    if (Date.now() - this._lastSwitchAt < DEBOUNCE_MS) {
+      return Promise.resolve();
     }
+
+    const { token, deviceId, myInputSource } = this.config;
+    this._inflight = (async () => {
+      try {
+        await setInputSource(token, deviceId, myInputSource);
+        this._lastSwitchAt = Date.now();
+        console.log(`Monitor switched to ${myInputSource}`);
+      } catch (e) {
+        console.error('Monitor switch failed:', e.message);
+      } finally {
+        this._inflight = null;
+      }
+    })();
+    return this._inflight;
   }
 
   /**
@@ -261,4 +350,10 @@ class MonitorManager {
   }
 }
 
-module.exports = { MonitorManager, discoverMonitors, fetchSupportedInputSources, setInputSource };
+module.exports = {
+  MonitorManager,
+  discoverMonitors,
+  fetchSupportedInputSources,
+  getCurrentInputSource,
+  setInputSource,
+};
