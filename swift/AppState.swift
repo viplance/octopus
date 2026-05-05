@@ -49,7 +49,17 @@ class AppState: ObservableObject {
             .store(in: &cancellables)
 
         networkManager.onEventReceived = { [weak self] event in
-            self?.inputManager.injectEvent(event)
+            guard let self = self else { return }
+            self.inputManager.injectEvent(event)
+            
+            // If we are receiving events, this Mac has focus — ensure monitor is on this Mac.
+            let now = Date().timeIntervalSince1970
+            if now - self.lastReceiveTime > 10.0 { // 10 second cooldown
+                self.lastReceiveTime = now
+                Task { @MainActor in
+                    self.monitorManager.switchToThisMac()
+                }
+            }
         }
 
         inputManager.onEventCaptured = { [weak self] event in
@@ -57,15 +67,17 @@ class AppState: ObservableObject {
         }
     }
 
+    private var lastReceiveTime: TimeInterval = 0
+
     func toggleSharing() {
         guard connectionStatus == .connected else { return }
         isSharingActive.toggle()
 
         if isSharingActive {
-            // This Mac is gaining input focus — switch monitor to this Mac's input source.
-            monitorManager.switchToThisMac()
             inputManager.startCapture(devices: availableDevices.filter { $0.isSelected })
         } else {
+            // This Mac just regained local input focus — switch monitor to this Mac.
+            monitorManager.switchToThisMac()
             inputManager.stopCapture()
         }
     }

@@ -84,9 +84,22 @@ function startApplication(shortcutChoice, monitorManager) {
   console.log('\n─── Setup Network & Input ───');
   let isIntercepting = false;
 
+  let lastReceiveTime = 0;
+  const RECEIVE_SWITCH_COOLDOWN = 10000; // 10 seconds
+
   const network = new NetworkManager(
-    (event) => {
+    async (event) => {
       addon.injectEvent(event);
+
+      // If we are receiving events, this Mac has focus — ensure monitor is on this Mac.
+      const now = Date.now();
+      if (now - lastReceiveTime > RECEIVE_SWITCH_COOLDOWN) {
+        if (monitorManager.isEnabled) {
+          console.log(`\nPeer activity detected — switching monitor to this Mac (${monitorManager.config.myInputSource})...`);
+          await monitorManager.switchToThisMac();
+        }
+      }
+      lastReceiveTime = now;
     },
     () => {
       const shortcutLabel = shortcutChoice === 2 ? 'Eject' : 'Cmd + Option + E';
@@ -117,8 +130,8 @@ function startApplication(shortcutChoice, monitorManager) {
       isIntercepting = event;
       console.log(`\nSync is now ${isIntercepting ? 'ACTIVE (Inputs intercepted)' : 'INACTIVE (Inputs normal)'}`);
 
-      if (isIntercepting) {
-        // This Mac just gained input focus — switch monitor to this Mac's source.
+      if (!isIntercepting) {
+        // This Mac just regained local input focus — switch monitor to this Mac.
         await monitorManager.switchToThisMac();
       }
     } else if (type === 'event') {
