@@ -50,9 +50,19 @@ class AppState: ObservableObject {
 
         networkManager.onEventReceived = { [weak self] event in
             guard let self = self else { return }
+            
+            // Handle explicit focus request from peer
+            if event.control == "gainFocus" {
+                Task { @MainActor in
+                    self.monitorManager.switchToThisMac()
+                }
+                return
+            }
+
             self.inputManager.injectEvent(event)
             
-            // If we are receiving events, this Mac has focus — ensure monitor is on this Mac.
+            // Fallback: If we are receiving events but didn't get a control message,
+            // still ensure monitor is on this Mac (with cooldown).
             let now = Date().timeIntervalSince1970
             if now - self.lastReceiveTime > 10.0 { // 10 second cooldown
                 self.lastReceiveTime = now
@@ -74,9 +84,12 @@ class AppState: ObservableObject {
         isSharingActive.toggle()
 
         if isSharingActive {
+            // Moving focus to peer — tell them to switch the monitor.
+            let focusEvent = InputEvent(type: .mouseMove, dx: 0, dy: 0, button: 0, keyCode: 0, isDown: false, flags: 0, rawData: nil, control: "gainFocus")
+            networkManager.sendEvent(focusEvent)
             inputManager.startCapture(devices: availableDevices.filter { $0.isSelected })
         } else {
-            // This Mac just regained local input focus — switch monitor to this Mac.
+            // Returning focus to this Mac — switch the monitor back.
             monitorManager.switchToThisMac()
             inputManager.stopCapture()
         }

@@ -89,9 +89,19 @@ function startApplication(shortcutChoice, monitorManager) {
 
   const network = new NetworkManager(
     async (event) => {
+      // Handle explicit focus request from peer
+      if (event.control === 'gainFocus') {
+        if (monitorManager.isEnabled) {
+          console.log(`\nPeer requested monitor focus — switching to this Mac (${monitorManager.config.myInputSource})...`);
+          await monitorManager.switchToThisMac();
+        }
+        return;
+      }
+
       addon.injectEvent(event);
 
-      // If we are receiving events, this Mac has focus — ensure monitor is on this Mac.
+      // Fallback: If we are receiving events but didn't get a control message,
+      // still ensure monitor is on this Mac (with cooldown).
       const now = Date.now();
       if (now - lastReceiveTime > RECEIVE_SWITCH_COOLDOWN) {
         if (monitorManager.isEnabled) {
@@ -114,6 +124,8 @@ function startApplication(shortcutChoice, monitorManager) {
         console.log('Returning keyboard and mouse control back to the local Mac.');
         isIntercepting = false;
         addon.setIntercepting(false);
+        // Regain focus locally
+        monitorManager.switchToThisMac();
       }
       console.log('Attempting to reconnect...');
       setTimeout(() => {
@@ -130,8 +142,11 @@ function startApplication(shortcutChoice, monitorManager) {
       isIntercepting = event;
       console.log(`\nSync is now ${isIntercepting ? 'ACTIVE (Inputs intercepted)' : 'INACTIVE (Inputs normal)'}`);
 
-      if (!isIntercepting) {
-        // This Mac just regained local input focus — switch monitor to this Mac.
+      if (isIntercepting) {
+        // We are moving focus to the peer — tell them to switch the monitor.
+        network.sendEvent({ control: 'gainFocus' });
+      } else {
+        // We are returning focus to this Mac — switch the monitor back.
         await monitorManager.switchToThisMac();
       }
     } else if (type === 'event') {
