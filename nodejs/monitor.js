@@ -78,6 +78,11 @@ function stRequest(method, path, token, body) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 401 means the SmartThings token is invalid or expired — retrying won't help.
+function isAuthError(err) {
+  return err instanceof HttpError && err.status === 401;
+}
+
 // 404/422 mean this capability name is wrong for this device — try the other one.
 // Everything else (5xx, network errors, timeouts) is transient and worth retrying.
 function isCapabilityMismatch(err) {
@@ -116,6 +121,7 @@ async function fetchStatus(token, deviceId) {
       return { cap, status };
     } catch (e) {
       lastErr = e;
+      if (isAuthError(e)) throw new Error('SmartThings token is invalid or expired. Generate a new token at https://account.smartthings.com/tokens and run monitor setup again.');
       if (!isCapabilityMismatch(e)) throw e;
     }
   }
@@ -173,6 +179,7 @@ async function setInputSourceOnce(token, deviceId, source) {
       return;
     } catch (e) {
       lastErr = e;
+      if (isAuthError(e)) throw new Error('SmartThings token is invalid or expired. Generate a new token at https://account.smartthings.com/tokens and run monitor setup again.');
       if (!isCapabilityMismatch(e)) throw e;
     }
   }
@@ -201,6 +208,7 @@ async function setInputSource(token, deviceId, source, { attempts = 3, verifyDel
       if (current === null || current === source) return;
       lastErr = new Error(`monitor reports "${current}", expected "${source}"`);
     } catch (e) {
+      if (isAuthError(e) || e.message.includes('token is invalid or expired')) throw e;
       lastErr = e;
     }
     if (attempt < attempts) {
