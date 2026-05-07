@@ -1,18 +1,39 @@
 import Foundation
 import Combine
 
-// Manages Samsung M7/M8 monitor input switching via the SmartThings cloud API.
-// DDC/CI is not supported on M7 hardware, so we use the SmartThings REST API.
+// Manages monitor input switching with two modes:
+//
+// .direct      — sleeps this Mac's external display output when giving focus to
+//                the peer so the monitor auto-switches to the peer's active signal.
+//                No cloud account required. Works with any monitor that auto-switches.
+//
+// .smartThings — sends an explicit setInputSource command via the SmartThings REST
+//                API. Use when the monitor does not auto-switch (e.g. Samsung M7/M8).
 class MonitorManager: ObservableObject {
+
+    // MARK: - Mode
+
+    enum MonitorMode: String, CaseIterable, Codable, Identifiable {
+        case direct      = "direct"
+        case smartThings = "smartthings"
+
+        var id: String { rawValue }
+        var displayName: String {
+            switch self {
+            case .direct:      return "Direct (auto-switch)"
+            case .smartThings: return "Samsung SmartThings"
+            }
+        }
+    }
 
     // MARK: - Persisted configuration
 
     struct Config: Codable {
         var enabled: Bool
+        var monitorMode: MonitorMode
         var personalAccessToken: String
         var deviceId: String
-        // The input source this Mac should activate when it gains focus.
-        // e.g. "HDMI1", "HDMI2", "USB-C"
+        // The input source this Mac should activate when it gains focus (SmartThings mode).
         var myInputSource: String
     }
 
@@ -20,7 +41,6 @@ class MonitorManager: ObservableObject {
         didSet { saveConfig() }
     }
 
-    /// All supported input source names (queried live from SmartThings; fallback list used until queried).
     @Published var availableInputSources: [String] = ["HDMI1", "HDMI2", "USB-C"]
     @Published var isQuerying = false
     @Published var lastError: String?
@@ -48,34 +68,76 @@ class MonitorManager: ObservableObject {
     init() {
         config = Self.loadConfig() ?? Config(
             enabled: false,
+            monitorMode: .direct,
             personalAccessToken: "",
             deviceId: "",
             myInputSource: "HDMI1"
         )
     }
 
-    // MARK: - Toggle entry point
+    // MARK: - Toggle entry points
 
-    /// Called by AppState when the user toggles sync ON (this Mac gains focus).
-    /// Switches the monitor to `myInputSource`.
+    /// Called when THIS Mac gains focus (peer just gave us control).
+    /// Wakes the external display so the monitor shows this Mac's signal.
     func switchToThisMac() {
-        guard config.enabled,
-              !config.personalAccessToken.isEmpty,
-              !config.deviceId.isEmpty,
-              !config.myInputSource.isEmpty
-        else { return }
+        guard config.enabled else { return }
 
-        Task {
-            await setInputSource(config.myInputSource)
+        switch config.monitorMode {
+        case .direct:
+            wakeDisplay()
+        case .smartThings:
+            guard !config.personalAccessToken.isEmpty,
+                  !config.deviceId.isEmpty,
+                  !config.myInputSource.isEmpty
+            else { return }
+            Task { await setInputSource(config.myInputSource) }
         }
+    }
+
+    /// Called when THIS Mac gives focus to the peer.
+    /// In Direct mode: sleep the external display so the monitor auto-switches.
+    /// In SmartThings mode: the peer calls its own switchToThisMac via gainFocus.
+    func switchToPeer() {
+        guard config.enabled else { return }
+        guard config.monitorMode == .direct else { return }
+        sleepDisplay()
+    }
+
+    // MARK: - Direct mode display control
+
+    private func sleepDisplay() {
+        // pmset displaysleepnow puts external displays into DPMS standby.
+        // The monitor sees no active signal from this Mac and auto-switches
+        // to the other connected Mac's signal.
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        task.arguments = ["displaysleepnow"]
+        try? task.run()
+    }
+
+    private func wakeDisplay() {
+        // Move the mouse cursor 1 pixel and back — the most reliable way to
+        // wake a DPMS-sleeping display without extra tools.
+        let script = """
+        tell application "System Events"
+            set mp to position of mouse
+            set x to item 1 of mp
+            set y to item 2 of mp
+            set position of mouse to {x + 1, y}
+            delay 0.05
+            set position of mouse to {x, y}
+        end tell
+        """
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", script]
+        try? task.run()
     }
 
     // MARK: - SmartThings API
 
     private static let baseURL = "https://api.smartthings.com/v1"
 
-    /// Lists all SmartThings devices. Populates `detectedDevices` with monitors
-    /// that expose the mediaInputSource capability.
     func discoverDevices() {
         guard !config.personalAccessToken.isEmpty else {
             lastError = "Enter your SmartThings Personal Access Token first."
@@ -91,10 +153,15 @@ class MonitorManager: ObservableObject {
                 var req = URLRequest(url: url)
                 req.setValue("Bearer \(config.personalAccessToken)", forHTTPHeaderField: "Authorization")
 
-                let (data, _) = try await session.data(for: req)
-                let root = try JSONDecoder().decode(DevicesResponse.self, from: data)
+                let (data, resp) = try await session.data(for: req)
+                if let http = resp as? HTTPURLResponse, http.statusCode == 401 {
+                    await MainActor.run {
+                        self.lastError = "Token invalid or expired. Generate a new token at account.smartthings.com/tokens."
+                    }
+                    return
+                }
 
-                // Filter to devices that advertise a media input source capability
+                let root = try JSONDecoder().decode(DevicesResponse.self, from: data)
                 let monitors = root.items.filter { device in
                     device.components?.contains(where: { component in
                         component.capabilities?.contains(where: {
@@ -117,7 +184,6 @@ class MonitorManager: ObservableObject {
         }
     }
 
-    /// Fetches the list of supported input source names for the configured device.
     func fetchSupportedInputSources() {
         guard !config.personalAccessToken.isEmpty, !config.deviceId.isEmpty else { return }
         isQuerying = true
@@ -126,7 +192,6 @@ class MonitorManager: ObservableObject {
         Task {
             defer { Task { @MainActor in self.isQuerying = false } }
             do {
-                // Try samsungvd.mediaInputSource first (M7/M8), fall back to mediaInputSource
                 let capabilities = ["samsungvd.mediaInputSource", "mediaInputSource"]
                 for cap in capabilities {
                     let urlStr = "\(Self.baseURL)/devices/\(config.deviceId)/components/main/capabilities/\(cap)/status"
@@ -175,8 +240,14 @@ class MonitorManager: ObservableObject {
 
             do {
                 let (_, resp) = try await session.data(for: req)
-                if let http = resp as? HTTPURLResponse, http.statusCode == 200 {
-                    return // success
+                if let http = resp as? HTTPURLResponse {
+                    if http.statusCode == 401 {
+                        await MainActor.run {
+                            self.lastError = "Token invalid or expired. Generate a new token at account.smartthings.com/tokens."
+                        }
+                        return
+                    }
+                    if http.statusCode == 200 { return }
                 }
             } catch {
                 await MainActor.run { self.lastError = "Switch failed: \(error.localizedDescription)" }
@@ -185,17 +256,10 @@ class MonitorManager: ObservableObject {
     }
 
     private func parseInputSources(from data: Data) -> [String]? {
-        // The status response looks like:
-        // { "inputSource": { "value": "HDMI1", "supportedValues": ["HDMI1","HDMI2","USB-C"] } }
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         let key = root["inputSource"] as? [String: Any]
-        if let supported = key?["supportedValues"] as? [String], !supported.isEmpty {
-            return supported
-        }
-        // Some firmware uses "supportedInputSources"
-        if let supported = key?["supportedInputSources"] as? [String], !supported.isEmpty {
-            return supported
-        }
+        if let supported = key?["supportedValues"] as? [String], !supported.isEmpty { return supported }
+        if let supported = key?["supportedInputSources"] as? [String], !supported.isEmpty { return supported }
         return nil
     }
 

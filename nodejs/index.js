@@ -57,15 +57,19 @@ if (require.main === module) {
     const monitorManager = new MonitorManager();
 
     if (monitorManager.isEnabled) {
-      console.log(`\nMonitor switch: enabled (source: ${monitorManager.config.myInputSource})`);
+      const modeLabel = monitorManager.monitorMode === 'smartthings'
+        ? `SmartThings (source: ${monitorManager.config.myInputSource})`
+        : 'Direct';
+      console.log(`\nMonitor switch: enabled (mode: ${modeLabel})`);
       const reconfigure = await ask('Reconfigure monitor switch? (y/N): ');
       if (reconfigure.toLowerCase() === 'y') {
         await monitorManager.setup(rl);
       }
     } else {
-      console.log('\n─── Monitor Switch (Samsung M7/M8 via SmartThings) ───');
-      console.log('When you toggle OctopusSync ON, the monitor can automatically');
-      console.log('switch its input source to this Mac.\n');
+      console.log('\n─── Monitor Switch ───');
+      console.log('When you toggle OctopusSync, the monitor can automatically switch.');
+      console.log('Mode 1 (Direct): sleeps this Mac\'s display so the monitor auto-switches.');
+      console.log('Mode 2 (SmartThings): sends an explicit input source command via SmartThings.\n');
       const wantMonitor = await ask('Set up monitor switching? (y/N): ');
       if (wantMonitor.toLowerCase() === 'y') {
         await monitorManager.setup(rl);
@@ -83,16 +87,14 @@ if (require.main === module) {
 function startApplication(shortcutChoice, monitorManager) {
   console.log('\n─── Setup Network & Input ───');
   let isIntercepting = false;
+  let isPeerConnected = false;
 
-  // The monitor must always show the Mac that is *receiving* the shared input
-  // (i.e. the screen the user is currently looking at). When this Mac toggles
-  // sync ON, it starts sending events to the peer, so the peer must become
-  // visible — we send a one-shot `gainFocus` control message and the peer
-  // switches its own monitor. When this Mac toggles sync OFF (or loses the
-  // connection), input returns here, so we switch the monitor locally.
-  //
-  // Receivers never switch on raw event traffic — only on the explicit
-  // `gainFocus` message — to avoid the flap loop the old fallback caused.
+  // The monitor must always show the Mac that is *receiving* the shared input.
+  // - When this Mac toggles ON: send gainFocus to peer (SmartThings mode) OR
+  //   sleep our own display (Direct mode) so the monitor auto-switches to peer.
+  // - When this Mac toggles OFF or loses connection: wake our display and
+  //   switch monitor back to this Mac.
+  // - Toggle is blocked when peer is not connected — user sees a clear message.
 
   const network = new NetworkManager(
     (event) => {
@@ -103,22 +105,25 @@ function startApplication(shortcutChoice, monitorManager) {
       addon.injectEvent(event);
     },
     () => {
+      isPeerConnected = true;
       const shortcutLabel = shortcutChoice === 2 ? 'Eject' : 'Cmd + Option + E';
       console.log(`Network connected! Press ${shortcutLabel} to toggle sync.`);
       if (monitorManager.isEnabled) {
-        console.log(`Monitor switch enabled — source: ${monitorManager.config.myInputSource}`);
+        const modeLabel = monitorManager.monitorMode === 'smartthings' ? 'SmartThings' : 'Direct';
+        console.log(`Monitor switch enabled (${modeLabel} mode).`);
       }
     },
     () => {
-      console.log('\nNetwork connection lost.');
+      isPeerConnected = false;
+      console.log('\nConnection lost.');
       if (isIntercepting) {
-        console.log('Returning keyboard and mouse control back to the local Mac.');
+        // Peer disappeared while we were sending input — return control locally.
+        console.log('Returning keyboard and mouse control to this Mac.');
         isIntercepting = false;
         addon.setIntercepting(false);
+        // Wake our display so we can see the screen again.
+        monitorManager.switchToThisMac();
       }
-      // Input just returned here, so make sure the monitor shows us.
-      // Fire-and-forget — the reconnect timer below shouldn't wait on SmartThings.
-      monitorManager.switchToThisMac();
       console.log('Attempting to reconnect...');
       setTimeout(() => {
         network.startDiscovery();
@@ -131,13 +136,24 @@ function startApplication(shortcutChoice, monitorManager) {
 
   addon.startTap((type, event) => {
     if (type === 'toggle') {
+      if (event && !isPeerConnected) {
+        // Trying to turn ON but peer is not connected.
+        console.log('\nCannot activate sync — peer is not connected (Connection lost).');
+        // Ensure the addon reflects the blocked state (no intercepting).
+        addon.setIntercepting(false);
+        return;
+      }
+
       isIntercepting = event;
       console.log(`\nSync is now ${isIntercepting ? 'ACTIVE (Inputs intercepted)' : 'INACTIVE (Inputs normal)'}`);
+
       if (isIntercepting) {
-        // Input is now flowing to the peer — peer must become visible.
+        // Giving focus to peer: tell peer to switch monitor (SmartThings mode)
+        // and sleep our own display (Direct mode).
         network.sendEvent({ control: 'gainFocus' });
+        monitorManager.switchToPeer();
       } else {
-        // Input returned to this Mac — switch the monitor locally.
+        // Regaining focus: wake our display.
         monitorManager.switchToThisMac();
       }
     } else if (type === 'event') {

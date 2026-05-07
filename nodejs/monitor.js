@@ -1,13 +1,18 @@
 /**
- * MonitorManager — Samsung M7/M8 input switching via the SmartThings cloud API.
+ * MonitorManager — monitor input switching with two modes:
  *
- * Samsung M7 does NOT support DDC/CI (it runs Tizen TV firmware), so the only
- * programmatic path is the SmartThings REST API via Samsung's cloud.
+ * Mode 1 — Direct (default):
+ *   Relies on the monitor's built-in auto-switch behaviour. When this Mac
+ *   gives focus to the peer it sleeps its own external display output so the
+ *   monitor sees the peer's signal as the only active one and switches
+ *   automatically. No cloud account required.
+ *   Requires: macOS `pmset` (pre-installed).
  *
- * Setup:
- *  1. Add your Samsung M7/M8 to the SmartThings app (phone) via Wi-Fi.
- *  2. Generate a Personal Access Token at https://account.smartthings.com/tokens
- *  3. Run `discoverDevices(token)` or `setupInteractive(rl)` to find your device ID.
+ * Mode 2 — Samsung SmartThings:
+ *   Sends an explicit setInputSource command to a Samsung M7/M8 via the
+ *   SmartThings cloud REST API. Use this when auto-switch is unreliable or
+ *   the monitor does not auto-switch on signal loss.
+ *   Requires: SmartThings Personal Access Token + device ID.
  *
  * Config is persisted to ~/.octopussync_monitor.json so you only set it up once.
  */
@@ -77,6 +82,53 @@ function stRequest(method, path, token, body) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ── Direct mode: native display sleep/wake ────────────────────────────────────
+
+const { execFile } = require('child_process');
+
+/**
+ * Sleep all external displays on this Mac so the monitor auto-switches to the
+ * peer's active signal. Uses `pmset displaysleepnow` which puts the display
+ * into DPMS standby — the monitor sees no signal and switches to the other
+ * input that is still active.
+ *
+ * Note: the internal MacBook display (if open) is unaffected — only external
+ * displays go dark because pmset targets display power, not backlight.
+ */
+function sleepExternalDisplay() {
+  return new Promise((resolve) => {
+    execFile('pmset', ['displaysleepnow'], (err) => {
+      if (err) console.error('Direct mode: could not sleep display:', err.message);
+      resolve();
+    });
+  });
+}
+
+/**
+ * Wake external displays by simulating a tiny mouse nudge via osascript.
+ * This is the most reliable cross-version way to wake a sleeping display
+ * without requiring additional tools.
+ */
+function wakeExternalDisplay() {
+  return new Promise((resolve) => {
+    // Moving the mouse 1 pixel and back wakes the display reliably
+    const script = `
+      tell application "System Events"
+        set mp to position of mouse
+        set x to item 1 of mp
+        set y to item 2 of mp
+        set position of mouse to {x + 1, y}
+        delay 0.05
+        set position of mouse to {x, y}
+      end tell
+    `;
+    execFile('osascript', ['-e', script], (err) => {
+      if (err) console.error('Direct mode: could not wake display:', err.message);
+      resolve();
+    });
+  });
+}
 
 // 401 means the SmartThings token is invalid or expired — retrying won't help.
 function isAuthError(err) {
@@ -220,25 +272,19 @@ async function setInputSource(token, deviceId, source, { attempts = 3, verifyDel
 
 // ── Interactive setup ─────────────────────────────────────────────────────────
 
-/**
- * Walks the user through the full monitor setup interactively.
- * Uses the readline interface passed in (already created by the caller).
- * Returns the final config object (also persisted to disk).
- */
-async function setupInteractive(rl) {
+async function setupSmartThingsInteractive(rl) {
   const ask = (q) => new Promise((res) => rl.question(q, (a) => res(a.trim())));
 
-  console.log('\n─── Monitor Switch Setup (Samsung M7/M8 via SmartThings) ───');
+  console.log('\n─── Monitor Switch Setup — Samsung SmartThings ───');
   console.log('Prerequisite: your monitor must be added to SmartThings (phone app).');
   console.log('Get a free Personal Access Token at: https://account.smartthings.com/tokens\n');
 
   const token = await ask('SmartThings Personal Access Token: ');
   if (!token) {
-    console.log('No token entered — skipping monitor switch setup.');
+    console.log('No token entered — skipping SmartThings setup.');
     return null;
   }
 
-  // Discover monitors automatically
   let deviceId = '';
   console.log('\nSearching for Samsung monitors in your SmartThings account...');
   let monitors = [];
@@ -264,11 +310,10 @@ async function setupInteractive(rl) {
   }
 
   if (!deviceId) {
-    console.log('No device selected — skipping monitor switch setup.');
+    console.log('No device selected — skipping SmartThings setup.');
     return null;
   }
 
-  // Fetch supported input sources
   console.log('\nFetching supported input sources from monitor...');
   let sources = ['HDMI1', 'HDMI2', 'USB-C'];
   try {
@@ -278,21 +323,50 @@ async function setupInteractive(rl) {
     console.log('  Could not fetch sources, using defaults:', sources.join(', '));
   }
 
-  // Ask which input source this Mac is connected to
   console.log('\nWhich input is THIS Mac connected to on the monitor?');
   sources.forEach((s, i) => console.log(`  ${i + 1}) ${s}`));
   const srcChoice = await ask(`Selection (1-${sources.length}): `);
   const srcIdx = parseInt(srcChoice, 10) - 1;
   const myInputSource = sources[srcIdx] || sources[0];
 
-  const cfg = { enabled: true, token, deviceId, myInputSource };
+  return { token, deviceId, myInputSource };
+}
+
+/**
+ * Interactive setup — asks mode first, then mode-specific settings.
+ * Returns the final config object (also persisted to disk).
+ */
+async function setupInteractive(rl) {
+  const ask = (q) => new Promise((res) => rl.question(q, (a) => res(a.trim())));
+
+  console.log('\n─── Monitor Switch Setup ───');
+  console.log('Select monitor mode:');
+  console.log('  1) Direct (default) — relies on monitor auto-switch when signal is lost');
+  console.log('     No cloud account needed. Works with most monitors.');
+  console.log('  2) Samsung SmartThings — explicitly sets input source via SmartThings API');
+  console.log('     Required for monitors that do not auto-switch on signal loss (e.g. Samsung M7/M8).');
+  const modeAnswer = await ask('Mode (1 or 2, Enter for 1): ');
+  const monitorMode = modeAnswer === '2' ? 'smartthings' : 'direct';
+
+  let cfg = { enabled: true, monitorMode };
+
+  if (monitorMode === 'smartthings') {
+    const stCfg = await setupSmartThingsInteractive(rl);
+    if (!stCfg) {
+      console.log('SmartThings setup cancelled — falling back to Direct mode.');
+      cfg.monitorMode = 'direct';
+    } else {
+      Object.assign(cfg, stCfg);
+    }
+  } else {
+    console.log('\nDirect mode selected.');
+    console.log('When you give focus to the peer, this Mac will sleep its display output.');
+    console.log('The monitor should auto-switch to the other Mac\'s signal.');
+    console.log('When you regain focus, the display will wake automatically.\n');
+  }
+
   saveConfig(cfg);
-
-  console.log(`\nMonitor switch configured:`);
-  console.log(`  Device : ${deviceId}`);
-  console.log(`  Source : ${myInputSource}`);
-  console.log(`  Config saved to ${CONFIG_PATH}`);
-
+  console.log(`\nMonitor switch configured (mode: ${cfg.monitorMode}). Config saved to ${CONFIG_PATH}`);
   return cfg;
 }
 
@@ -305,40 +379,39 @@ class MonitorManager {
     this._lastSwitchAt = 0;
   }
 
+  get monitorMode() {
+    return (this.config && this.config.monitorMode) || 'direct';
+  }
+
   get isEnabled() {
-    return !!(
-      this.config &&
-      this.config.enabled &&
-      this.config.token &&
-      this.config.deviceId &&
-      this.config.myInputSource
-    );
+    if (!this.config || !this.config.enabled) return false;
+    if (this.monitorMode === 'direct') return true;
+    // SmartThings requires token + deviceId + source
+    return !!(this.config.token && this.config.deviceId && this.config.myInputSource);
   }
 
   /**
-   * Switch the monitor to this Mac's configured input source.
-   *
-   * - Coalesces concurrent calls: while a switch is in flight, additional
-   *   calls return the same promise instead of stacking up SmartThings
-   *   commands (which the monitor treats as a "stutter").
-   * - Debounces: if we just successfully switched within DEBOUNCE_MS, skip.
-   * - Best-effort: errors are logged, never thrown.
+   * Called when THIS Mac gains focus (peer just gave us control).
+   * Wake our display so the monitor shows this Mac's signal.
    */
   switchToThisMac() {
     if (!this.isEnabled) return Promise.resolve();
     if (this._inflight) return this._inflight;
 
     const DEBOUNCE_MS = 5000;
-    if (Date.now() - this._lastSwitchAt < DEBOUNCE_MS) {
-      return Promise.resolve();
-    }
+    if (Date.now() - this._lastSwitchAt < DEBOUNCE_MS) return Promise.resolve();
 
-    const { token, deviceId, myInputSource } = this.config;
     this._inflight = (async () => {
       try {
-        await setInputSource(token, deviceId, myInputSource);
+        if (this.monitorMode === 'direct') {
+          await wakeExternalDisplay();
+          console.log('Monitor wake signal sent (Direct mode).');
+        } else {
+          const { token, deviceId, myInputSource } = this.config;
+          await setInputSource(token, deviceId, myInputSource);
+          console.log(`Monitor switched to ${myInputSource} (SmartThings mode).`);
+        }
         this._lastSwitchAt = Date.now();
-        console.log(`Monitor switched to ${myInputSource}`);
       } catch (e) {
         console.error('Monitor switch failed:', e.message);
       } finally {
@@ -346,6 +419,25 @@ class MonitorManager {
       }
     })();
     return this._inflight;
+  }
+
+  /**
+   * Called when THIS Mac gives focus to the peer.
+   * In Direct mode: sleep our display so the monitor auto-switches to peer.
+   * In SmartThings mode: the peer will call its own switchToThisMac via gainFocus.
+   */
+  switchToPeer() {
+    if (!this.isEnabled) return Promise.resolve();
+    if (this.monitorMode !== 'direct') return Promise.resolve();
+
+    return (async () => {
+      try {
+        await sleepExternalDisplay();
+        console.log('Display sleeping — monitor should auto-switch to peer (Direct mode).');
+      } catch (e) {
+        console.error('Direct mode sleep failed:', e.message);
+      }
+    })();
   }
 
   /**

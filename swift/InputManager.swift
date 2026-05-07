@@ -40,9 +40,19 @@ class InputManager {
             guard let manager = refcon?.assumingMemoryBound(to: InputManager.self).pointee else {
                 return Unmanaged.passRetained(event)
             }
-            
+
+            // The system disables our tap when the screen is locked or the
+            // loginwindow takes over. Re-enable it immediately so we keep
+            // intercepting events (e.g. while the peer is at the password prompt).
+            if type == .tapDisabledByUserInput || type == .tapDisabledByTimeout {
+                if let tap = manager.eventTap {
+                    CGEvent.tapEnable(tap: tap, enable: true)
+                }
+                return nil
+            }
+
             manager.handleCapturedEvent(event: event, type: type)
-            
+
             return nil
         }
         
@@ -80,15 +90,15 @@ class InputManager {
         case .keyDown:
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags.rawValue
-            inputEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: true, flags: flags, rawData: nil)
+            inputEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: true, flags: flags, rawData: nil, control: nil)
         case .keyUp:
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags.rawValue
-            inputEvent = InputEvent(type: .keyUp, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: false, flags: flags, rawData: nil)
+            inputEvent = InputEvent(type: .keyUp, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: false, flags: flags, rawData: nil, control: nil)
         default:
             // For scroll wheels, gestures and NX_SYSDEFINED, simply serialize the event to raw binary data
             if let data = event.data {
-                inputEvent = InputEvent(type: .raw, dx: nil, dy: nil, button: nil, keyCode: nil, isDown: nil, rawData: data as Data)
+                inputEvent = InputEvent(type: .raw, dx: nil, dy: nil, button: nil, keyCode: nil, isDown: nil, flags: nil, rawData: data as Data, control: nil)
             }
             break
         }
@@ -106,52 +116,54 @@ class InputManager {
                     let rawType = rawEvent.type
                     let currentLocEvent = CGEvent(source: nil)
                     var currentLoc = currentLocEvent?.location ?? .zero
-                    
+
                     if rawType == .mouseMoved || rawType == .leftMouseDragged || rawType == .rightMouseDragged ||
                        rawType == .leftMouseDown || rawType == .leftMouseUp || rawType == .rightMouseDown || rawType == .rightMouseUp {
-                        
+
                         var dx: Double = 0
                         var dy: Double = 0
-                        
+
                         if rawType == .mouseMoved || rawType == .leftMouseDragged || rawType == .rightMouseDragged {
                             dx = rawEvent.getDoubleValueField(.mouseEventDeltaX)
                             dy = rawEvent.getDoubleValueField(.mouseEventDeltaY)
                         }
-                        
+
                         currentLoc.x += dx
                         currentLoc.y += dy
-                        
-                        // Clamp to screen bounds
+
                         var displayCount: UInt32 = 0
                         CGGetActiveDisplayList(0, nil, &displayCount)
                         var activeDisplays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
                         CGGetActiveDisplayList(displayCount, &activeDisplays, &displayCount)
-                        
+
                         var totalBounds = CGRect.null
                         for display in activeDisplays {
                             let bounds = CGDisplayBounds(display)
                             totalBounds = totalBounds.isNull ? bounds : totalBounds.union(bounds)
                         }
-                        
+
                         if !totalBounds.isNull {
                             currentLoc.x = max(totalBounds.minX, min(currentLoc.x, totalBounds.maxX - 1))
                             currentLoc.y = max(totalBounds.minY, min(currentLoc.y, totalBounds.maxY - 1))
                         }
-                        
-
                     }
-                    
+
                     rawEvent.location = currentLoc
-                    rawEvent.post(tap: .cghidEventTap)
+                    // Post at session level so events reach the login window / password fields.
+                    // cghidEventTap alone does not penetrate the loginwindow's security session.
+                    rawEvent.post(tap: .cgSessionEventTap)
                 }
             }
         case .keyDown, .keyUp:
             if let keyCode = event.keyCode, let isDown = event.isDown {
-                let keyEvent = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keyCode), keyDown: isDown)
+                let src = CGEventSource(stateID: .combinedSessionState)
+                let keyEvent = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(keyCode), keyDown: isDown)
                 if let flags = event.flags {
                     keyEvent?.flags = CGEventFlags(rawValue: flags)
                 }
-                keyEvent?.post(tap: .cghidEventTap)
+                // Post at session level — reaches loginwindow password field.
+                // Also ensure the keyboard state tracks correctly for modifier keys.
+                keyEvent?.post(tap: .cgSessionEventTap)
             }
         default:
             break

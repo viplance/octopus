@@ -9,6 +9,7 @@ class AppState: ObservableObject {
     @Published var connectedDeviceName: String?
     @Published var availableDevices: [BluetoothDevice] = []
     @Published var launchAtLogin = false
+    @Published var showConnectionLostAlert = false
 
     enum ConnectionStatus: String {
         case disconnected = "Disconnected"
@@ -43,6 +44,20 @@ class AppState: ObservableObject {
             .assign(to: \.connectionStatus, on: self)
             .store(in: &cancellables)
 
+        // When connection drops while sharing is active, return control and alert.
+        networkManager.$connectionStatus
+            .receive(on: RunLoop.main)
+            .sink { [weak self] status in
+                guard let self = self else { return }
+                if status == .disconnected && self.isSharingActive {
+                    self.isSharingActive = false
+                    self.inputManager.stopCapture()
+                    self.monitorManager.switchToThisMac()
+                    self.showConnectionLostAlert = true
+                }
+            }
+            .store(in: &cancellables)
+
         deviceManager.$devices
             .receive(on: RunLoop.main)
             .assign(to: \.availableDevices, on: self)
@@ -50,8 +65,7 @@ class AppState: ObservableObject {
 
         networkManager.onEventReceived = { [weak self] event in
             guard let self = self else { return }
-            
-            // Handle explicit focus request from peer
+
             if event.control == "gainFocus" {
                 Task { @MainActor in
                     self.monitorManager.switchToThisMac()
@@ -60,11 +74,9 @@ class AppState: ObservableObject {
             }
 
             self.inputManager.injectEvent(event)
-            
-            // Fallback: If we are receiving events but didn't get a control message,
-            // still ensure monitor is on this Mac (with cooldown).
+
             let now = Date().timeIntervalSince1970
-            if now - self.lastReceiveTime > 10.0 { // 10 second cooldown
+            if now - self.lastReceiveTime > 10.0 {
                 self.lastReceiveTime = now
                 Task { @MainActor in
                     self.monitorManager.switchToThisMac()
@@ -80,16 +92,25 @@ class AppState: ObservableObject {
     private var lastReceiveTime: TimeInterval = 0
 
     func toggleSharing() {
-        guard connectionStatus == .connected else { return }
+        // Block toggle if peer is not connected.
+        guard connectionStatus == .connected else {
+            if isSharingActive {
+                // Was active, now lost — already handled by the connectionStatus sink.
+                return
+            }
+            showConnectionLostAlert = true
+            return
+        }
+
         isSharingActive.toggle()
 
         if isSharingActive {
-            // Moving focus to peer — tell them to switch the monitor.
             let focusEvent = InputEvent(type: .mouseMove, dx: 0, dy: 0, button: 0, keyCode: 0, isDown: false, flags: 0, rawData: nil, control: "gainFocus")
             networkManager.sendEvent(focusEvent)
+            // Direct mode: sleep our display so the monitor auto-switches to peer.
+            monitorManager.switchToPeer()
             inputManager.startCapture(devices: availableDevices.filter { $0.isSelected })
         } else {
-            // Returning focus to this Mac — switch the monitor back.
             monitorManager.switchToThisMac()
             inputManager.stopCapture()
         }
