@@ -9,7 +9,6 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var appState: AppState
-    @State private var showingPermissionsAlert = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -27,6 +26,19 @@ struct ContentView: View {
             Text("Status: \(appState.connectionStatus.rawValue)")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+
+            if !appState.isAccessibilityGranted {
+                Button(action: {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }) {
+                    Label("Accessibility access required", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
 
             Divider()
 
@@ -87,25 +99,12 @@ struct ContentView: View {
         }
         .padding()
         .frame(width: 290)
-        .alert("Accessibility Access Required", isPresented: $showingPermissionsAlert) {
-            Button("Open Settings") {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                    NSWorkspace.shared.open(url)
-                }
-            }
-            Button("Later", role: .cancel) {}
-        } message: {
-            Text("OctopusSync requires Accessibility permissions to capture and inject keyboard/mouse events.\n\nOpen System Settings → Privacy & Security → Accessibility and enable OctopusSync.")
-        }
         .alert("Connection Lost", isPresented: $appState.showConnectionLostAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("The peer Mac is not connected. Sharing has been paused. Reconnect and try again.")
         }
         .onAppear {
-            if !PermissionsHelper.checkAndPromptAccessibilityPermission() {
-                showingPermissionsAlert = true
-            }
             appState.networkManager.start()
         }
     }

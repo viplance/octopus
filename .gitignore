@@ -1,5 +1,6 @@
-# Xcode
+# Xcode / SPM build output
 build/
+.build/
 *.pbxuser
 !default.pbxuser
 *.mode1v3

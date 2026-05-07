@@ -10,6 +10,7 @@ class AppState: ObservableObject {
     @Published var availableDevices: [BluetoothDevice] = []
     @Published var launchAtLogin = false
     @Published var showConnectionLostAlert = false
+    @Published var isAccessibilityGranted: Bool = AXIsProcessTrusted()
 
     enum ConnectionStatus: String {
         case disconnected = "Disconnected"
@@ -25,10 +26,29 @@ class AppState: ObservableObject {
     let monitorManager = MonitorManager()
 
     private var cancellables = Set<AnyCancellable>()
+    private var accessibilityTimer: Timer?
 
     init() {
         setupBindings()
         deviceManager.refreshDevices()
+        startAccessibilityPolling()
+    }
+
+    // Poll AXIsProcessTrusted every second until granted, then stop.
+    // This auto-dismisses the warning as soon as the user enables access
+    // in System Settings without requiring an app restart.
+    private func startAccessibilityPolling() {
+        guard !isAccessibilityGranted else { return }
+        accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            if AXIsProcessTrusted() {
+                Task { @MainActor in
+                    self.isAccessibilityGranted = true
+                }
+                timer.invalidate()
+                self.accessibilityTimer = nil
+            }
+        }
     }
 
     private func setupBindings() {
