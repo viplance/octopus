@@ -29,6 +29,7 @@ class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var shortcutSyncCancellable: AnyCancellable?
     private var accessibilityTimer: Timer?
+    private var permissionWatchdog: Timer?
 
     private static let selectedDevicesKey = "selectedDeviceNames"
 
@@ -102,13 +103,21 @@ class AppState: ObservableObject {
             .sink { [weak self] status in
                 guard let self = self else { return }
                 if status == .disconnected && self.isSharingActive {
-                    self.isSharingActive = false
-                    self.inputManager.stopCapture()
-                    self.monitorManager.switchToThisMac()
-                    self.showConnectionLostAlert = true
+                    self.restoreLocalControl()
                 }
             }
             .store(in: &cancellables)
+
+        // If the event tap dies mid-capture (permission revoked at runtime),
+        // hand control back immediately. Without this, the dead tap keeps
+        // swallowing keys/clicks and the user cannot use their machine.
+        inputManager.onTapBroken = { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                guard self.isSharingActive else { return }
+                self.restoreLocalControl()
+            }
+        }
 
         deviceManager.$devices
             .receive(on: RunLoop.main)
@@ -190,6 +199,46 @@ class AppState: ObservableObject {
 
     private var lastReceiveTime: TimeInterval = 0
 
+    // Single recovery path used when sharing must end against the user's
+    // wishes — connection lost, tap killed, permission revoked. Stops the
+    // tap, returns the cursor to this Mac, alerts, and re-checks permissions
+    // so a re-grant will trigger the relaunch flow.
+    private func restoreLocalControl() {
+        guard isSharingActive else { return }
+        isSharingActive = false
+        inputManager.stopCapture()
+        monitorManager.switchToThisMac()
+        showConnectionLostAlert = true
+        stopPermissionWatchdog()
+        isAccessibilityGranted = AXIsProcessTrusted()
+        isInputMonitoringGranted = PermissionsHelper.isInputMonitoringGranted()
+        startPermissionPolling()
+    }
+
+    // While sharing is active, poll permissions so revocation is caught
+    // before the user notices a freeze. macOS does not deliver a callback
+    // when the user toggles these off in System Settings.
+    private func startPermissionWatchdog() {
+        stopPermissionWatchdog()
+        permissionWatchdog = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let ax = AXIsProcessTrusted()
+            let im = PermissionsHelper.isInputMonitoringGranted()
+            Task { @MainActor in
+                self.isAccessibilityGranted = ax
+                self.isInputMonitoringGranted = im
+                if (!ax || !im) && self.isSharingActive {
+                    self.restoreLocalControl()
+                }
+            }
+        }
+    }
+
+    private func stopPermissionWatchdog() {
+        permissionWatchdog?.invalidate()
+        permissionWatchdog = nil
+    }
+
     func toggleSharing() {
         // Block toggle if peer is not connected.
         guard connectionStatus == .connected else {
@@ -209,9 +258,11 @@ class AppState: ObservableObject {
             // Direct mode: sleep our display so the monitor auto-switches to peer.
             monitorManager.switchToPeer()
             inputManager.startCapture(devices: availableDevices.filter { $0.isSelected })
+            startPermissionWatchdog()
         } else {
             monitorManager.switchToThisMac()
             inputManager.stopCapture()
+            stopPermissionWatchdog()
         }
     }
 

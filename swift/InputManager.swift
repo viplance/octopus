@@ -5,6 +5,11 @@ import AppKit
 class InputManager {
     var onEventCaptured: ((InputEvent) -> Void)?
     var onToggleShortcut: (() -> Void)?
+    // Fired when the event tap dies and cannot be revived (typically because
+    // Accessibility or Input Monitoring was revoked). The owner must stop
+    // capture and return local control to the user, otherwise the OS keeps
+    // routing input through a dead tap and the machine appears frozen.
+    var onTapBroken: (() -> Void)?
     var shortcutConfig: ShortcutConfig?
 
     private var eventTap: CFMachPort?
@@ -45,14 +50,21 @@ class InputManager {
             guard let refcon else { return Unmanaged.passRetained(event) }
             let manager = Unmanaged<InputManager>.fromOpaque(refcon).takeUnretainedValue()
 
-            // The system disables our tap when the screen is locked or the
-            // loginwindow takes over. Re-enable it immediately so we keep
-            // intercepting events (e.g. while the peer is at the password prompt).
+            // The system disables our tap when the screen is locked, the
+            // loginwindow takes over, or the user revokes Accessibility /
+            // Input Monitoring. Re-enable so we keep intercepting in the
+            // first two cases — but if the tap stays disabled, the permission
+            // is gone and we MUST hand control back to the user, otherwise
+            // their keyboard/mouse appear frozen because we are still
+            // returning nil for every event below.
             if type == .tapDisabledByUserInput || type == .tapDisabledByTimeout {
                 if let tap = manager.eventTap {
                     CGEvent.tapEnable(tap: tap, enable: true)
+                    if !CGEvent.tapIsEnabled(tap: tap) {
+                        DispatchQueue.main.async { manager.onTapBroken?() }
+                    }
                 }
-                return nil
+                return Unmanaged.passRetained(event)
             }
 
             // Detect toggle shortcut before capturing. This tap is installed
@@ -112,6 +124,12 @@ class InputManager {
             thread.name = "com.octopus.input-tap"
             thread.start()
             tapThread = thread
+        } else {
+            // tapCreate returns nil when Accessibility / Input Monitoring is
+            // missing. Surface this so the caller can abort sharing instead of
+            // entering a half-started state where the cursor is on the peer
+            // but local input never gets captured.
+            DispatchQueue.main.async { [weak self] in self?.onTapBroken?() }
         }
     }
 
