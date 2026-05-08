@@ -56,7 +56,6 @@ class NetworkManager: ObservableObject {
 
     private func startListening() {
         let params = NWParameters.tcp
-        params.includePeerToPeer = true
 
         do {
             listener = try NWListener(using: params)
@@ -99,10 +98,7 @@ class NetworkManager: ObservableObject {
     private func startBrowsing() {
         browser?.cancel()
 
-        let params = NWParameters()
-        params.includePeerToPeer = true
-
-        browser = NWBrowser(for: .bonjour(type: serviceType, domain: "local."), using: params)
+        browser = NWBrowser(for: .bonjour(type: serviceType, domain: "local."), using: .init())
 
         browser?.stateUpdateHandler = { [weak self] state in
             Self.log("[Browser] state: \(state)")
@@ -163,9 +159,7 @@ class NetworkManager: ObservableObject {
     // MARK: - Connecting
 
     private func connectToEndpoint(_ endpoint: NWEndpoint) {
-        let params = NWParameters.tcp
-        params.includePeerToPeer = true
-        setupConnection(NWConnection(to: endpoint, using: params))
+        setupConnection(NWConnection(to: endpoint, using: .tcp))
     }
 
     private func setupConnection(_ conn: NWConnection) {
