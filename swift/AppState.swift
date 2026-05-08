@@ -39,8 +39,7 @@ class AppState: ObservableObject {
     // in System Settings without requiring an app restart.
     private func startAccessibilityPolling() {
         guard !isAccessibilityGranted else { return }
-        accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
-            guard let self else { timer.invalidate(); return }
+        accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
             if AXIsProcessTrusted() {
                 timer.invalidate()
                 // Restart the process so CGEventTap and other AX-dependent
