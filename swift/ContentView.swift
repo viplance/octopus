@@ -104,9 +104,7 @@ struct ContentView: View {
         } message: {
             Text("The peer Mac is not connected. Sharing has been paused. Reconnect and try again.")
         }
-        .onAppear {
-            appState.networkManager.start()
-        }
+        .onAppear {}
     }
 
     private var statusColor: Color {

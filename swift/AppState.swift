@@ -32,6 +32,7 @@ class AppState: ObservableObject {
         setupBindings()
         deviceManager.refreshDevices()
         startAccessibilityPolling()
+        networkManager.start()
     }
 
     // Poll AXIsProcessTrusted every second until granted, then stop.
