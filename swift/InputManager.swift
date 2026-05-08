@@ -9,6 +9,8 @@ class InputManager {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var tapThread: Thread?
+    private let processingQueue = DispatchQueue(label: "com.octopus.input-processing", qos: .userInteractive)
     
     func startCapture(devices: [BluetoothDevice]) {
         guard !devices.isEmpty else { return }
@@ -80,7 +82,12 @@ class InputManager {
                 }
             }
 
-            manager.handleCapturedEvent(event: event, type: type)
+            let retainedEvent = Unmanaged.passRetained(event)
+            let eventType = type
+            manager.processingQueue.async {
+                let cgEvent = retainedEvent.takeRetainedValue()
+                manager.handleCapturedEvent(event: cgEvent, type: eventType)
+            }
 
             return nil
         }
@@ -95,10 +102,16 @@ class InputManager {
         
         if let tap = eventTap {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            // Attach to the main runloop unconditionally. An active head-insert tap
-            // whose source isn't serviced will freeze input system-wide.
-            CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
+            let source = runLoopSource!
+            let thread = Thread {
+                CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+                CFRunLoopRun()
+            }
+            thread.qualityOfService = .userInteractive
+            thread.name = "com.octopus.input-tap"
+            thread.start()
+            tapThread = thread
         }
     }
 
@@ -108,10 +121,8 @@ class InputManager {
             CFMachPortInvalidate(tap)
             eventTap = nil
         }
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-            runLoopSource = nil
-        }
+        runLoopSource = nil
+        tapThread = nil
     }
     
     private func handleCapturedEvent(event: CGEvent, type: CGEventType) {

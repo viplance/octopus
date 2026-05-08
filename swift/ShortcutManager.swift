@@ -95,6 +95,7 @@ class ShortcutManager: ObservableObject {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var tapThread: Thread?
 
     private static let defaultsKey = "shortcutConfig"
 
@@ -103,9 +104,12 @@ class ShortcutManager: ObservableObject {
             CGEvent.tapEnable(tap: tap, enable: true)
             return
         }
-        // Tap is missing or invalid — rebuild it.
+        if let tap = eventTap {
+            CFMachPortInvalidate(tap)
+        }
         eventTap = nil
         runLoopSource = nil
+        tapThread = nil
         setupEventTap()
     }
 
@@ -116,15 +120,7 @@ class ShortcutManager: ObservableObject {
         } else {
             self.config = .ejectKey
         }
-        // Defer tap installation onto the main runloop. Installing in init can
-        // attach the source to a transient SwiftUI initialization runloop, which
-        // stops being serviced once init returns — that starves the active,
-        // .headInsertEventTap and macOS stops delivering input system-wide.
-        if Thread.isMainThread {
-            setupEventTap()
-        } else {
-            DispatchQueue.main.async { [weak self] in self?.setupEventTap() }
-        }
+        setupEventTap()
     }
 
     private func saveConfig() {
@@ -226,12 +222,17 @@ class ShortcutManager: ObservableObject {
 
         if let tap = eventTap {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            // Always attach to the main runloop, not the calling thread's runloop.
-            // Active event taps placed at .headInsertEventTap MUST have their
-            // source serviced continuously, or macOS will stop delivering input.
-            CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
-            NetworkManager.log("[Shortcut] event tap created and enabled")
+            let source = runLoopSource!
+            let thread = Thread {
+                CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+                CFRunLoopRun()
+            }
+            thread.qualityOfService = .userInteractive
+            thread.name = "com.octopus.shortcut-tap"
+            thread.start()
+            tapThread = thread
+            NetworkManager.log("[Shortcut] event tap created on dedicated thread")
         } else {
             NetworkManager.log("[Shortcut] FAILED to create event tap — Accessibility permission likely missing")
         }
@@ -242,8 +243,6 @@ class ShortcutManager: ObservableObject {
             CGEvent.tapEnable(tap: tap, enable: false)
             CFMachPortInvalidate(tap)
         }
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-        }
+        tapThread = nil
     }
 }
