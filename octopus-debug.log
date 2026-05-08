@@ -1,17 +1,12 @@
-2026-05-08 12:47:12 +0000 [Shortcut] event tap created and enabled
-2026-05-08 12:47:12 +0000 [Network] start() — myName: FundraiseUp
-2026-05-08 12:47:12 +0000 [Listener] state: ready
-2026-05-08 12:47:12 +0000 [Browser] state: ready
-2026-05-08 12:47:12 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 12:47:12 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:47:12 +0000 [Browser] not initiating to Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local. — peer is server
-2026-05-08 12:47:13 +0000 [Browser] results changed: 2 result(s)
-2026-05-08 12:47:13 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:47:13 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:47:13 +0000 [Browser] not initiating to Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local. — peer is server
-2026-05-08 12:47:13 +0000 [Browser] skipping own endpoint: FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:47:14 +0000 [Listener] accepting inbound: fe80::c51:a72b:a5af:dbdd%en0.64927
-2026-05-08 12:47:14 +0000 [Connection] setting up to fe80::c51:a72b:a5af:dbdd%en0.64927
-2026-05-08 12:47:14 +0000 [Connection] state: preparing for fe80::c51:a72b:a5af:dbdd%en0.64927
-2026-05-08 12:47:14 +0000 [Connection] state: ready for fe80::c51:a72b:a5af:dbdd%en0.64927
-2026-05-08 12:47:14 +0000 [Connection] READY: fe80::c51:a72b:a5af:dbdd%en0.64927
+2026-05-08 12:47:44 +0000 [Shortcut] event tap created and enabled
+2026-05-08 12:47:44 +0000 [Network] start() — myName: FundraiseUp
+2026-05-08 12:47:44 +0000 [Listener] state: ready
+2026-05-08 12:47:44 +0000 [Browser] state: ready
+2026-05-08 12:47:44 +0000 [Browser] results changed: 1 result(s)
+2026-05-08 12:47:44 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:47:44 +0000 [Browser] not initiating to Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local. — peer is server
+2026-05-08 12:47:45 +0000 [Browser] results changed: 2 result(s)
+2026-05-08 12:47:45 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:47:45 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:47:45 +0000 [Browser] not initiating to Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local. — peer is server
+2026-05-08 12:47:45 +0000 [Browser] skipping own endpoint: FundraiseUp._octopussync._tcp.local.
