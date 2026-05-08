@@ -77,6 +77,11 @@ struct ContentView: View {
 
             Divider()
 
+            // ── Shortcut ──────────────────────────────────────────────────────
+            ShortcutSectionView(shortcut: appState.shortcutManager)
+
+            Divider()
+
             // ── Global toggles ────────────────────────────────────────────────
             Toggle("Launch at Login", isOn: Binding(
                 get: { appState.launchAtLogin },
@@ -277,6 +282,47 @@ struct MonitorSectionView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+    }
+}
+
+// MARK: - Shortcut Section
+
+struct ShortcutSectionView: View {
+    @ObservedObject var shortcut: ShortcutManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Toggle Shortcut")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            HStack {
+                Button(action: {
+                    shortcut.isRecording.toggle()
+                }) {
+                    Text(shortcut.isRecording ? "Press a key..." : shortcut.config.displayString)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.bordered)
+                .foregroundColor(shortcut.isRecording ? .orange : .primary)
+
+                if !shortcut.config.isEjectKey {
+                    Button(action: {
+                        shortcut.config = .ejectKey
+                    }) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.caption)
+                    }
+                    .help("Reset to Eject key")
+                }
+            }
+
+            Text("Press this key on either Mac to switch input control.")
+                .font(.caption2)
+                .foregroundColor(.gray)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

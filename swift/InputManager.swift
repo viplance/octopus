@@ -37,9 +37,8 @@ class InputManager {
         let eventMask = eventTypes.reduce(0, |)
         
         let callback: CGEventTapCallBack = { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-            guard let manager = refcon?.assumingMemoryBound(to: InputManager.self).pointee else {
-                return Unmanaged.passRetained(event)
-            }
+            guard let refcon else { return Unmanaged.passRetained(event) }
+            let manager = Unmanaged<InputManager>.fromOpaque(refcon).takeUnretainedValue()
 
             // The system disables our tap when the screen is locked or the
             // loginwindow takes over. Re-enable it immediately so we keep

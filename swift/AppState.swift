@@ -26,6 +26,7 @@ class AppState: ObservableObject {
     let monitorManager = MonitorManager()
 
     private var cancellables = Set<AnyCancellable>()
+    private var shortcutSyncCancellable: AnyCancellable?
     private var accessibilityTimer: Timer?
 
     init() {
@@ -98,6 +99,17 @@ class AppState: ObservableObject {
                 return
             }
 
+            if let ctrl = event.control, ctrl.hasPrefix("shortcutSync:") {
+                let json = String(ctrl.dropFirst("shortcutSync:".count))
+                if let data = json.data(using: .utf8),
+                   let config = try? JSONDecoder().decode(ShortcutConfig.self, from: data) {
+                    Task { @MainActor in
+                        self.shortcutManager.config = config
+                    }
+                }
+                return
+            }
+
             self.inputManager.injectEvent(event)
 
             let now = Date().timeIntervalSince1970
@@ -112,6 +124,20 @@ class AppState: ObservableObject {
         inputManager.onEventCaptured = { [weak self] event in
             self?.networkManager.sendEvent(event)
         }
+
+        shortcutSyncCancellable = shortcutManager.$config
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] config in
+                guard let self, self.connectionStatus == .connected else { return }
+                if let json = try? JSONEncoder().encode(config),
+                   let str = String(data: json, encoding: .utf8) {
+                    let syncEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil,
+                                               keyCode: nil, isDown: nil, flags: nil, rawData: nil,
+                                               control: "shortcutSync:\(str)")
+                    self.networkManager.sendEvent(syncEvent)
+                }
+            }
     }
 
     private var lastReceiveTime: TimeInterval = 0
