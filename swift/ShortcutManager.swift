@@ -95,7 +95,6 @@ class ShortcutManager: ObservableObject {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var tapThread: Thread?
 
     private static let defaultsKey = "shortcutConfig"
 
@@ -104,12 +103,8 @@ class ShortcutManager: ObservableObject {
             CGEvent.tapEnable(tap: tap, enable: true)
             return
         }
-        if let tap = eventTap {
-            CFMachPortInvalidate(tap)
-        }
         eventTap = nil
         runLoopSource = nil
-        tapThread = nil
         setupEventTap()
     }
 
@@ -120,7 +115,11 @@ class ShortcutManager: ObservableObject {
         } else {
             self.config = .ejectKey
         }
-        setupEventTap()
+        if Thread.isMainThread {
+            setupEventTap()
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.setupEventTap() }
+        }
     }
 
     private func saveConfig() {
@@ -222,17 +221,9 @@ class ShortcutManager: ObservableObject {
 
         if let tap = eventTap {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+            CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
-            let source = runLoopSource!
-            let thread = Thread {
-                CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
-                CFRunLoopRun()
-            }
-            thread.qualityOfService = .userInteractive
-            thread.name = "com.octopus.shortcut-tap"
-            thread.start()
-            tapThread = thread
-            NetworkManager.log("[Shortcut] event tap created on dedicated thread")
+            NetworkManager.log("[Shortcut] event tap created and enabled")
         } else {
             NetworkManager.log("[Shortcut] FAILED to create event tap — Accessibility permission likely missing")
         }
@@ -243,6 +234,8 @@ class ShortcutManager: ObservableObject {
             CGEvent.tapEnable(tap: tap, enable: false)
             CFMachPortInvalidate(tap)
         }
-        tapThread = nil
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
     }
 }
