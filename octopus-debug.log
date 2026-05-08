@@ -1,14 +1,13 @@
-2026-05-08 11:59:47 +0000 [Network] start() — myName: Dzmitry’s MacBook Pro
-2026-05-08 11:59:47 +0000 [Listener] state: ready
-2026-05-08 11:59:47 +0000 [Browser] state: ready
-2026-05-08 11:59:48 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 11:59:48 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 11:59:48 +0000 [Browser] skipping own endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:04:48 +0000 [Connection] setting up to fe80::95:790:7412:fd18%en0.56346
-2026-05-08 12:04:48 +0000 [Connection] state: preparing for fe80::95:790:7412:fd18%en0.56346
-2026-05-08 12:04:48 +0000 [Connection] state: ready for fe80::95:790:7412:fd18%en0.56346
-2026-05-08 12:04:48 +0000 [Connection] READY: fe80::95:790:7412:fd18%en0.56346
-2026-05-08 12:04:49 +0000 [Browser] results changed: 2 result(s)
-2026-05-08 12:04:49 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:04:49 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:04:49 +0000 [Browser] skipped — connection already exists
+2026-05-08 12:11:55 +0000 [Shortcut] FAILED to create event tap — Accessibility permission likely missing
+2026-05-08 12:11:55 +0000 [Network] start() — myName: Dzmitry’s MacBook Pro
+2026-05-08 12:11:55 +0000 [Listener] state: ready
+2026-05-08 12:11:55 +0000 [Browser] state: ready
+2026-05-08 12:11:55 +0000 [Browser] results changed: 1 result(s)
+2026-05-08 12:11:55 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:11:55 +0000 [Browser] connecting to peer: FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:11:55 +0000 [Connection] setting up to FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:11:55 +0000 [Connection] state: preparing for FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:11:56 +0000 [Browser] results changed: 2 result(s)
+2026-05-08 12:11:56 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:11:56 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:11:56 +0000 [Browser] skipped — connection already exists
