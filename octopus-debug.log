@@ -6,3 +6,9 @@
 2026-05-08 12:04:48 +0000 [Browser] connecting to peer: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
 2026-05-08 12:04:48 +0000 [Connection] setting up to Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
 2026-05-08 12:04:48 +0000 [Connection] state: preparing for Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:04:48 +0000 [Connection] state: ready for Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:04:48 +0000 [Connection] READY: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:04:49 +0000 [Browser] results changed: 2 result(s)
+2026-05-08 12:04:49 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:04:49 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:04:49 +0000 [Browser] skipped — connection already exists
