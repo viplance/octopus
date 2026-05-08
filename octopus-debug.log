@@ -33,3 +33,6 @@
 2026-05-08 12:47:13 +0000 [Connection] state: preparing for FundraiseUp._octopussync._tcp.local.
 2026-05-08 12:47:14 +0000 [Connection] state: ready for FundraiseUp._octopussync._tcp.local.
 2026-05-08 12:47:14 +0000 [Connection] READY: FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:47:42 +0000 [Browser] results changed: 1 result(s)
+2026-05-08 12:47:42 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:47:42 +0000 [Browser] skipped — connection already exists
