@@ -1,84 +1,13 @@
-2026-05-08 12:22:02 +0000 [Shortcut] event tap created and enabled
-2026-05-08 12:22:02 +0000 [Network] start() — myName: Dzmitry’s MacBook Pro
-2026-05-08 12:22:02 +0000 [Listener] state: ready
-2026-05-08 12:22:02 +0000 [Browser] state: ready
-2026-05-08 12:22:02 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 12:22:02 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:22:02 +0000 [Browser] connecting to peer: FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:22:02 +0000 [Connection] setting up to FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:22:02 +0000 [Connection] state: preparing for FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:22:02 +0000 [Connection] state: ready for FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:22:02 +0000 [Connection] READY: FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:22:03 +0000 [Browser] results changed: 2 result(s)
-2026-05-08 12:22:03 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:22:03 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:22:03 +0000 [Browser] skipped — connection already exists
-2026-05-08 12:22:11 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 12:22:11 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:22:11 +0000 [Browser] skipped — connection already exists
-2026-05-08 12:22:31 +0000 [Connection] state: failed(POSIXErrorCode(rawValue: 60): Operation timed out) for FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:22:31 +0000 [Connection] FAILED: POSIXErrorCode(rawValue: 60): Operation timed out
-2026-05-08 12:22:31 +0000 [Connection] state: cancelled for FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:22:33 +0000 [Browser] state: cancelled
-2026-05-08 12:22:33 +0000 [Browser] state: ready
-2026-05-08 12:22:33 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 12:22:33 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:22:33 +0000 [Browser] skipping own endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:47:13 +0000 [Browser] results changed: 2 result(s)
-2026-05-08 12:47:13 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:47:13 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:47:13 +0000 [Browser] skipping own endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:47:13 +0000 [Browser] connecting to peer: FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:47:13 +0000 [Connection] setting up to FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:47:13 +0000 [Connection] state: preparing for FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:47:14 +0000 [Connection] state: ready for FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:47:14 +0000 [Connection] READY: FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:47:42 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 12:47:42 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:47:42 +0000 [Browser] skipped — connection already exists
-2026-05-08 12:47:45 +0000 [Browser] results changed: 2 result(s)
-2026-05-08 12:47:45 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 12:47:45 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
-2026-05-08 12:47:45 +0000 [Browser] skipped — connection already exists
-2026-05-08 13:27:09 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 13:27:09 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 13:27:09 +0000 [Browser] skipped — connection already exists
-2026-05-08 13:27:11 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 13:27:11 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 13:27:11 +0000 [Browser] skipped — connection already exists
-2026-05-08 13:27:29 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 13:27:29 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 13:27:29 +0000 [Browser] skipped — connection already exists
-2026-05-08 13:27:31 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 13:27:31 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 13:27:31 +0000 [Browser] skipped — connection already exists
-2026-05-08 16:14:55 +0000 [Browser] results changed: 0 result(s)
-2026-05-08 16:14:55 +0000 [Browser] skipped — connection already exists
-2026-05-08 16:30:38 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 16:30:38 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 16:30:38 +0000 [Browser] skipped — connection already exists
-2026-05-08 16:31:51 +0000 [Browser] results changed: 2 result(s)
-2026-05-08 16:31:51 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 16:31:51 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
-2026-05-08 16:31:51 +0000 [Browser] skipped — connection already exists
-2026-05-08 16:32:05 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 16:32:05 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 16:32:05 +0000 [Browser] skipped — connection already exists
-2026-05-08 16:32:06 +0000 [Browser] results changed: 2 result(s)
-2026-05-08 16:32:06 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 16:32:06 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
-2026-05-08 16:32:06 +0000 [Browser] skipped — connection already exists
-2026-05-08 16:32:18 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 16:32:18 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 16:32:18 +0000 [Browser] skipped — connection already exists
-2026-05-08 16:32:23 +0000 [Browser] results changed: 2 result(s)
-2026-05-08 16:32:23 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 16:32:23 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
-2026-05-08 16:32:23 +0000 [Browser] skipped — connection already exists
-2026-05-08 16:32:51 +0000 [Browser] results changed: 1 result(s)
-2026-05-08 16:32:51 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 16:32:51 +0000 [Browser] skipped — connection already exists
-2026-05-08 16:32:54 +0000 [Browser] results changed: 2 result(s)
-2026-05-08 16:32:54 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
-2026-05-08 16:32:54 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
-2026-05-08 16:32:54 +0000 [Browser] skipped — connection already exists
+2026-05-08 16:34:37 +0000 [Shortcut] event tap created on dedicated thread
+2026-05-08 16:34:37 +0000 [Network] start() — myName: Dzmitry’s MacBook Pro
+2026-05-08 16:34:37 +0000 [Listener] state: ready
+2026-05-08 16:34:37 +0000 [Browser] state: ready
+2026-05-08 16:34:37 +0000 [Browser] results changed: 1 result(s)
+2026-05-08 16:34:37 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
+2026-05-08 16:34:37 +0000 [Browser] connecting to peer: FundraiseUp._octopussync._tcp.local.
+2026-05-08 16:34:37 +0000 [Connection] setting up to FundraiseUp._octopussync._tcp.local.
+2026-05-08 16:34:37 +0000 [Connection] state: preparing for FundraiseUp._octopussync._tcp.local.
+2026-05-08 16:34:38 +0000 [Browser] results changed: 2 result(s)
+2026-05-08 16:34:38 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 16:34:38 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
+2026-05-08 16:34:38 +0000 [Browser] skipped — connection already exists
