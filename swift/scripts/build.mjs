@@ -92,30 +92,97 @@ try {
 
 await writeFile(join(appContents, "Info.plist"), buildInfoPlist(), "utf8");
 
-// Use a real Apple Development certificate so TCC grants (Accessibility,
-// Input Monitoring) survive rebuilds. Try each available cert and use the
-// first one codesign accepts on this machine.
-// Falls back to ad-hoc if none work (e.g. no Xcode login, CI machine).
-let signed = false;
-try {
-  const output = execSync("security find-identity -v -p codesigning", { stdio: "pipe" }).toString();
-  const certs = [...output.matchAll(/"(Apple Development:[^"]+)"/g)].map(m => m[1]);
-  for (const cert of certs) {
-    try {
-      execSync(`codesign --force --deep --sign "${cert}" "${appBundle}"`, { stdio: "pipe" });
-      console.log(`Signed with: ${cert}`);
-      signed = true;
-      break;
-    } catch {
-      // cert not usable on this machine (wrong keychain), try next
+// Sign with a stable identity so TCC grants (Accessibility, Input Monitoring)
+// survive rebuilds. Priority:
+//   1. Apple Development cert (if logged in to Xcode with Apple ID)
+//   2. Local self-signed cert named "OctopusSync" (created once, reused forever)
+//   3. Ad-hoc fallback (TCC resets every rebuild — last resort)
+
+const SELF_SIGNED_NAME = "OctopusSync-codesign";
+
+function findUsableCert(pattern) {
+  try {
+    const output = execSync("security find-identity -v -p codesigning", { stdio: "pipe" }).toString();
+    const certs = [...output.matchAll(new RegExp(`"(${pattern}[^"]*)"`, "g"))].map(m => m[1]);
+    for (const cert of certs) {
+      try {
+        execSync(`codesign --force --deep --sign "${cert}" "${appBundle}"`, { stdio: "pipe" });
+        return cert;
+      } catch {
+        // not usable on this machine, try next
+      }
     }
-  }
-} catch {
-  // security command not available
+  } catch { /* security not available */ }
+  return null;
 }
 
+function createSelfSignedCert() {
+  // Creates a self-signed code-signing cert in the login keychain.
+  // This only needs to happen once per machine.
+  console.log(`Creating self-signed certificate "${SELF_SIGNED_NAME}"...`);
+  const script = `
+    tell application "Keychain Access" to activate
+  `;
+  // Use security's built-in cert creation via python/expect is complex;
+  // use the Certificate Assistant via command line instead.
+  execSync([
+    "security", "create-keychain-cert",
+    "-k", `${process.env.HOME}/Library/Keychains/login.keychain-db`,
+    "-c", SELF_SIGNED_NAME,
+    "-C", "1",   // code signing
+    "-s",        // self-signed
+    "-a", "rsa", "-b", "2048",
+    "-Z", "sha256",
+    "-e", "always",
+  ].join(" "), { stdio: "pipe" });
+}
+
+let signed = false;
+
+// 1. Try Apple Development cert
+const appleDevCert = findUsableCert("Apple Development:");
+if (appleDevCert) {
+  console.log(`Signed with: ${appleDevCert}`);
+  signed = true;
+}
+
+// 2. Try or create self-signed cert
 if (!signed) {
-  console.log("No usable Apple Development certificate — using ad-hoc signature.");
+  let selfSigned = findUsableCert(SELF_SIGNED_NAME);
+  if (!selfSigned) {
+    try {
+      // Create it using a Python one-liner via security + openssl
+      execSync([
+        `security create-certificate`,
+      ].join(" "), { stdio: "pipe" });
+    } catch { /* ignore, fallback below */ }
+
+    // Most reliable: use openssl + security import
+    try {
+      const tmpKey = `/tmp/${SELF_SIGNED_NAME}.key`;
+      const tmpCert = `/tmp/${SELF_SIGNED_NAME}.pem`;
+      const tmpP12 = `/tmp/${SELF_SIGNED_NAME}.p12`;
+      execSync(`openssl req -newkey rsa:2048 -nodes -keyout "${tmpKey}" -x509 -days 3650 -out "${tmpCert}" -subj "/CN=${SELF_SIGNED_NAME}/O=OctopusSync"`, { stdio: "pipe" });
+      execSync(`openssl pkcs12 -export -out "${tmpP12}" -inkey "${tmpKey}" -in "${tmpCert}" -passout pass:`, { stdio: "pipe" });
+      execSync(`security import "${tmpP12}" -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign -P "" 2>/dev/null || true`, { stdio: "pipe" });
+      // Mark as trusted for code signing
+      execSync(`security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${tmpCert}" 2>/dev/null || true`, { stdio: "pipe" });
+      execSync(`rm -f "${tmpKey}" "${tmpCert}" "${tmpP12}"`, { stdio: "pipe" });
+      selfSigned = findUsableCert(SELF_SIGNED_NAME);
+    } catch (e) {
+      // openssl not available or import failed
+    }
+  }
+
+  if (selfSigned) {
+    console.log(`Signed with self-signed certificate: ${selfSigned}`);
+    signed = true;
+  }
+}
+
+// 3. Ad-hoc fallback
+if (!signed) {
+  console.log("No usable certificate found — using ad-hoc signature.");
   console.log("Note: Accessibility permission must be re-granted after each rebuild.");
   await run("codesign", ["--force", "--deep", "--sign", "-", appBundle]);
 }

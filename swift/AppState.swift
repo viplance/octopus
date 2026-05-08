@@ -42,11 +42,11 @@ class AppState: ObservableObject {
         accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
             if AXIsProcessTrusted() {
-                Task { @MainActor in
-                    self.isAccessibilityGranted = true
+                Task { @MainActor [weak self] in
+                    self?.isAccessibilityGranted = true
+                    self?.accessibilityTimer = nil
                 }
                 timer.invalidate()
-                self.accessibilityTimer = nil
             }
         }
     }

@@ -5,6 +5,8 @@
   "scripts": {
     "build": "node ./scripts/build.mjs",
     "dmg": "node ./scripts/dmg.mjs",
-    "dist": "pnpm run build && pnpm run dmg"
+    "dist": "pnpm run build && pnpm run dmg",
+    "start": "open build/OctopusSync.app",
+    "relaunch": "node ./scripts/restart.mjs"
   }
 }
