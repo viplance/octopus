@@ -42,11 +42,16 @@ class AppState: ObservableObject {
         accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
             if AXIsProcessTrusted() {
-                Task { @MainActor [weak self] in
-                    self?.isAccessibilityGranted = true
-                    self?.accessibilityTimer = nil
-                }
                 timer.invalidate()
+                // Restart the process so CGEventTap and other AX-dependent
+                // systems initialize with the permission active. macOS does not
+                // always deliver the grant to the already-running process.
+                let url = Bundle.main.bundleURL
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                task.arguments = [url.path]
+                try? task.run()
+                NSApplication.shared.terminate(nil)
             }
         }
     }
