@@ -10,19 +10,25 @@ class NetworkManager: ObservableObject {
     private var listener: NWListener?
     private var browser: NWBrowser?
     private var connection: NWConnection?
+    private var started = false
 
     private let serviceType = "_octopussync._tcp"
     private let myName: String = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
 
-    // Length-prefix framing state for incoming data
     private var recvBuffer = Data()
 
+    // MARK: - Lifecycle
+
     func start() {
+        // Guard against being called multiple times (e.g. on every menu open).
+        guard !started else { return }
+        started = true
         startListening()
         startBrowsing()
     }
 
     func stop() {
+        started = false
         listener?.cancel()
         browser?.cancel()
         connection?.cancel()
@@ -32,7 +38,7 @@ class NetworkManager: ObservableObject {
         DispatchQueue.main.async { self.connectionStatus = .disconnected }
     }
 
-    // MARK: - Listening (we are the server)
+    // MARK: - Listening
 
     private func startListening() {
         let params = NWParameters.tcp
@@ -73,9 +79,11 @@ class NetworkManager: ObservableObject {
         }
     }
 
-    // MARK: - Browsing (we are the client)
+    // MARK: - Browsing
 
     private func startBrowsing() {
+        browser?.cancel()
+
         let params = NWParameters()
         params.includePeerToPeer = true
 
@@ -100,10 +108,7 @@ class NetworkManager: ObservableObject {
             guard let self, self.connection == nil else { return }
 
             for result in results {
-                // Skip our own service
-                if case .service(let name, _, _, _) = result.endpoint {
-                    if name == self.myName { continue }
-                }
+                if self.isOwnEndpoint(result.endpoint) { continue }
                 print("Discovered peer:", result.endpoint)
                 self.connectToEndpoint(result.endpoint)
                 break
@@ -118,15 +123,23 @@ class NetworkManager: ObservableObject {
         }
     }
 
+    // Checks if a discovered endpoint belongs to this Mac.
+    // Bonjour may suffix "(2)", "(3)" etc. when a service is re-registered
+    // without properly cancelling the previous one, so we strip the suffix.
+    private func isOwnEndpoint(_ endpoint: NWEndpoint) -> Bool {
+        if case .service(let name, _, _, _) = endpoint {
+            let baseName = name.replacingOccurrences(of: #" \(\d+\)$"#, with: "", options: .regularExpression)
+            return baseName == myName
+        }
+        return false
+    }
+
     // MARK: - Connecting
 
     private func connectToEndpoint(_ endpoint: NWEndpoint) {
-        // Use TCP with peer-to-peer so AWDL/Wi-Fi Direct paths are included
         let params = NWParameters.tcp
         params.includePeerToPeer = true
-
-        let conn = NWConnection(to: endpoint, using: params)
-        setupConnection(conn)
+        setupConnection(NWConnection(to: endpoint, using: params))
     }
 
     private func setupConnection(_ conn: NWConnection) {
@@ -159,11 +172,11 @@ class NetworkManager: ObservableObject {
         connection?.cancel()
         connection = nil
         recvBuffer = Data()
-        if connectionStatus != .disconnected {
-            connectionStatus = .disconnected
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                self?.startBrowsing()
-            }
+        guard connectionStatus != .disconnected else { return }
+        connectionStatus = .disconnected
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.started else { return }
+            self.startBrowsing()
         }
     }
 
@@ -183,31 +196,25 @@ class NetworkManager: ObservableObject {
         return frame
     }
 
-    // MARK: - Receiving (length-prefixed frames)
+    // MARK: - Receiving
 
     private func receiveNextFrame() {
         guard let conn = connection else { return }
-
-        // Read at least 4 bytes (the length header)
         conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self else { return }
-
             if let data, !data.isEmpty {
                 self.recvBuffer.append(data)
                 self.drainFrames()
             }
-
             if let error {
                 print("Receive error:", error)
                 DispatchQueue.main.async { self.teardown() }
                 return
             }
-
             if isComplete {
                 DispatchQueue.main.async { self.teardown() }
                 return
             }
-
             self.receiveNextFrame()
         }
     }
@@ -219,10 +226,8 @@ class NetworkManager: ObservableObject {
             }
             let total = 4 + Int(length)
             guard recvBuffer.count >= total else { break }
-
             let payload = recvBuffer.subdata(in: 4..<total)
             recvBuffer.removeFirst(total)
-
             if let event = try? JSONDecoder().decode(InputEvent.self, from: payload) {
                 onEventReceived?(event)
             }
