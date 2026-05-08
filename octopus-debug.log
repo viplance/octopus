@@ -18,3 +18,11 @@
 2026-05-08 12:20:30 +0000 [Browser] results changed: 1 result(s)
 2026-05-08 12:20:30 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
 2026-05-08 12:20:30 +0000 [Browser] skipped — connection already exists
+2026-05-08 12:21:31 +0000 [Connection] state: failed(POSIXErrorCode(rawValue: 54): Connection reset by peer) for fe80::c51:a72b:a5af:dbdd%en0.64925
+2026-05-08 12:21:31 +0000 [Connection] FAILED: POSIXErrorCode(rawValue: 54): Connection reset by peer
+2026-05-08 12:21:31 +0000 [Connection] state: cancelled for fe80::c51:a72b:a5af:dbdd%en0.64925
+2026-05-08 12:21:33 +0000 [Browser] state: cancelled
+2026-05-08 12:21:33 +0000 [Browser] state: ready
+2026-05-08 12:21:33 +0000 [Browser] results changed: 1 result(s)
+2026-05-08 12:21:33 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:21:33 +0000 [Browser] skipping own endpoint: FundraiseUp._octopussync._tcp.local.
