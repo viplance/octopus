@@ -1,9 +1,12 @@
 import Foundation
 import CoreGraphics
+import AppKit
 
 class InputManager {
     var onEventCaptured: ((InputEvent) -> Void)?
-    
+    var onToggleShortcut: (() -> Void)?
+    var shortcutConfig: ShortcutConfig?
+
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     
@@ -48,6 +51,33 @@ class InputManager {
                     CGEvent.tapEnable(tap: tap, enable: true)
                 }
                 return nil
+            }
+
+            // Detect toggle shortcut before capturing. This tap is installed
+            // AFTER ShortcutManager's tap (headInsertEventTap = newest first),
+            // so ShortcutManager never sees events while capture is active.
+            if let config = manager.shortcutConfig {
+                if config.isEjectKey {
+                    if type.rawValue == 14 {
+                        if let ev = NSEvent(cgEvent: event), ev.subtype.rawValue == 8 {
+                            let data1 = ev.data1
+                            let keyCode = (data1 & 0xFFFF0000) >> 16
+                            let keyFlags = (data1 & 0x0000FFFF)
+                            if keyCode == 14 && keyFlags == 0x0A {
+                                DispatchQueue.main.async { manager.onToggleShortcut?() }
+                                return nil
+                            }
+                        }
+                    }
+                } else if type == .keyDown {
+                    let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+                    let modOnly: CGEventFlags = [.maskControl, .maskAlternate, .maskShift, .maskCommand]
+                    let mods = event.flags.rawValue & modOnly.rawValue
+                    if keyCode == config.keyCode && mods == config.modifiers {
+                        DispatchQueue.main.async { manager.onToggleShortcut?() }
+                        return nil
+                    }
+                }
             }
 
             manager.handleCapturedEvent(event: event, type: type)

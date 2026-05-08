@@ -159,6 +159,20 @@ class AppState: ObservableObject {
             self?.networkManager.sendEvent(event)
         }
 
+        inputManager.shortcutConfig = shortcutManager.config
+        inputManager.onToggleShortcut = { [weak self] in
+            guard let self = self else { return }
+            Task { @MainActor in
+                self.toggleSharing()
+            }
+        }
+
+        shortcutManager.$config
+            .sink { [weak self] config in
+                self?.inputManager.shortcutConfig = config
+            }
+            .store(in: &cancellables)
+
         shortcutSyncCancellable = shortcutManager.$config
             .dropFirst()
             .removeDuplicates()

@@ -56,6 +56,9 @@ class NetworkManager: ObservableObject {
 
     private func startListening() {
         let params = NWParameters.tcp
+        if let tcp = params.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+            tcp.noDelay = true
+        }
 
         do {
             listener = try NWListener(using: params)
@@ -183,7 +186,11 @@ class NetworkManager: ObservableObject {
     // MARK: - Connecting
 
     private func connectToEndpoint(_ endpoint: NWEndpoint) {
-        setupConnection(NWConnection(to: endpoint, using: .tcp))
+        let params = NWParameters.tcp
+        if let tcp = params.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+            tcp.noDelay = true
+        }
+        setupConnection(NWConnection(to: endpoint, using: params))
     }
 
     private func setupConnection(_ conn: NWConnection) {
