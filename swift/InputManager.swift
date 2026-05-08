@@ -114,10 +114,10 @@ class InputManager {
         
         if let tap = eventTap {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CGEvent.tapEnable(tap: tap, enable: true)
             let source = runLoopSource!
             let thread = Thread {
                 CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+                CGEvent.tapEnable(tap: tap, enable: true)
                 CFRunLoopRun()
             }
             thread.qualityOfService = .userInteractive
