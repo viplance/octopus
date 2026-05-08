@@ -23,6 +23,7 @@ class NetworkManager: ObservableObject {
         // Guard against being called multiple times (e.g. on every menu open).
         guard !started else { return }
         started = true
+        print("[Network] start() — myName: \(myName)")
         startListening()
         startBrowsing()
     }
@@ -49,6 +50,7 @@ class NetworkManager: ObservableObject {
             listener?.service = NWListener.Service(name: myName, type: serviceType)
 
             listener?.stateUpdateHandler = { [weak self] state in
+                print("[Listener] state:", state)
                 DispatchQueue.main.async {
                     switch state {
                     case .ready:
@@ -56,7 +58,7 @@ class NetworkManager: ObservableObject {
                             self?.connectionStatus = .hosting
                         }
                     case .failed(let err):
-                        print("Listener failed:", err)
+                        print("[Listener] failed:", err)
                         self?.connectionStatus = .disconnected
                     default:
                         break
@@ -90,6 +92,7 @@ class NetworkManager: ObservableObject {
         browser = NWBrowser(for: .bonjour(type: serviceType, domain: "local."), using: params)
 
         browser?.stateUpdateHandler = { [weak self] state in
+            print("[Browser] state:", state)
             DispatchQueue.main.async {
                 switch state {
                 case .ready:
@@ -97,7 +100,7 @@ class NetworkManager: ObservableObject {
                         self?.connectionStatus = .lookingForHost
                     }
                 case .failed(let err):
-                    print("Browser failed:", err)
+                    print("[Browser] failed:", err)
                 default:
                     break
                 }
@@ -105,11 +108,21 @@ class NetworkManager: ObservableObject {
         }
 
         browser?.browseResultsChangedHandler = { [weak self] results, _ in
-            guard let self, self.connection == nil else { return }
+            print("[Browser] results changed: \(results.count) result(s)")
+            for r in results {
+                print("[Browser]   endpoint:", r.endpoint)
+            }
+            guard let self, self.connection == nil else {
+                print("[Browser] skipped — connection already exists")
+                return
+            }
 
             for result in results {
-                if self.isOwnEndpoint(result.endpoint) { continue }
-                print("Discovered peer:", result.endpoint)
+                if self.isOwnEndpoint(result.endpoint) {
+                    print("[Browser] skipping own endpoint:", result.endpoint)
+                    continue
+                }
+                print("[Browser] connecting to peer:", result.endpoint)
                 self.connectToEndpoint(result.endpoint)
                 break
             }
