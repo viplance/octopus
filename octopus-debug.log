@@ -16,3 +16,11 @@
 2026-05-08 12:22:11 +0000 [Browser] results changed: 1 result(s)
 2026-05-08 12:22:11 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
 2026-05-08 12:22:11 +0000 [Browser] skipped — connection already exists
+2026-05-08 12:22:31 +0000 [Connection] state: failed(POSIXErrorCode(rawValue: 60): Operation timed out) for FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:22:31 +0000 [Connection] FAILED: POSIXErrorCode(rawValue: 60): Operation timed out
+2026-05-08 12:22:31 +0000 [Connection] state: cancelled for FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:22:33 +0000 [Browser] state: cancelled
+2026-05-08 12:22:33 +0000 [Browser] state: ready
+2026-05-08 12:22:33 +0000 [Browser] results changed: 1 result(s)
+2026-05-08 12:22:33 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:22:33 +0000 [Browser] skipping own endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
