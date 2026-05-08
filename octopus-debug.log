@@ -24,3 +24,12 @@
 2026-05-08 12:22:33 +0000 [Browser] results changed: 1 result(s)
 2026-05-08 12:22:33 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
 2026-05-08 12:22:33 +0000 [Browser] skipping own endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:47:13 +0000 [Browser] results changed: 2 result(s)
+2026-05-08 12:47:13 +0000 [Browser]   endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:47:13 +0000 [Browser]   endpoint: FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:47:13 +0000 [Browser] skipping own endpoint: Dzmitry’s\032MacBook\032Pro._octopussync._tcp.local.
+2026-05-08 12:47:13 +0000 [Browser] connecting to peer: FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:47:13 +0000 [Connection] setting up to FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:47:13 +0000 [Connection] state: preparing for FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:47:14 +0000 [Connection] state: ready for FundraiseUp._octopussync._tcp.local.
+2026-05-08 12:47:14 +0000 [Connection] READY: FundraiseUp._octopussync._tcp.local.
