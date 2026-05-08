@@ -80,10 +80,11 @@ class NetworkManager: ObservableObject {
 
             listener?.newConnectionHandler = { [weak self] newConn in
                 guard let self, self.connection == nil else {
+                    Self.log("[Listener] rejecting inbound (already connected): \(newConn.endpoint)")
                     newConn.cancel()
                     return
                 }
-                print("Incoming connection from listener")
+                Self.log("[Listener] accepting inbound: \(newConn.endpoint)")
                 self.setupConnection(newConn)
             }
 
@@ -131,6 +132,16 @@ class NetworkManager: ObservableObject {
                     Self.log("[Browser] skipping own endpoint: \(result.endpoint)")
                     continue
                 }
+                // Role election: only the peer with the lexicographically smaller
+                // name initiates the outbound connection. The other side waits for
+                // its listener to accept the incoming connection. This avoids the
+                // simultaneous-connect race where both sides dial each other and
+                // both reject the inbound (because their own outbound is already
+                // pending), leaving both stuck in .preparing.
+                guard self.shouldInitiate(toward: result.endpoint) else {
+                    Self.log("[Browser] not initiating to \(result.endpoint) — peer is server")
+                    continue
+                }
                 Self.log("[Browser] connecting to peer: \(result.endpoint)")
                 self.connectToEndpoint(result.endpoint)
                 break
@@ -150,10 +161,23 @@ class NetworkManager: ObservableObject {
     // without properly cancelling the previous one, so we strip the suffix.
     private func isOwnEndpoint(_ endpoint: NWEndpoint) -> Bool {
         if case .service(let name, _, _, _) = endpoint {
-            let baseName = name.replacingOccurrences(of: #" \(\d+\)$"#, with: "", options: .regularExpression)
-            return baseName == myName
+            return baseServiceName(name) == myName
         }
         return false
+    }
+
+    private func baseServiceName(_ name: String) -> String {
+        name.replacingOccurrences(of: #" \(\d+\)$"#, with: "", options: .regularExpression)
+    }
+
+    // Returns true if this Mac should initiate the outbound connection to the
+    // given peer. We compare hostnames lexicographically — the smaller name wins
+    // the "client" role. Without this tie-breaker, both peers dial each other
+    // simultaneously and both inbounds get rejected, leaving both stuck in .preparing.
+    private func shouldInitiate(toward endpoint: NWEndpoint) -> Bool {
+        guard case .service(let name, _, _, _) = endpoint else { return true }
+        let peerName = baseServiceName(name)
+        return myName < peerName
     }
 
     // MARK: - Connecting
