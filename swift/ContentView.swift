@@ -40,6 +40,20 @@ struct ContentView: View {
                 .buttonStyle(PlainButtonStyle())
             }
 
+            if !appState.isInputMonitoringGranted {
+                Button(action: {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }) {
+                    Label("Input Monitoring access required", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Required for shortcuts and input capture to work")
+            }
+
             Divider()
 
             // ── Devices ──────────────────────────────────────────────────────
@@ -301,25 +315,25 @@ struct ShortcutSectionView: View {
                 Button(action: {
                     shortcut.isRecording.toggle()
                 }) {
-                    Text(shortcut.isRecording ? "Press a key..." : shortcut.config.displayString)
+                    Text(shortcut.isRecording ? "Press a key... (Esc to cancel)" : shortcut.config.displayString)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 4)
                 }
                 .buttonStyle(.bordered)
                 .foregroundColor(shortcut.isRecording ? .orange : .primary)
 
-                if !shortcut.config.isEjectKey {
-                    Button(action: {
-                        shortcut.config = .ejectKey
-                    }) {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.caption)
-                    }
-                    .help("Reset to Eject key")
+                Button(action: {
+                    shortcut.isRecording = false
+                    shortcut.config = .ejectKey
+                }) {
+                    Image(systemName: "eject.fill")
+                        .font(.caption)
                 }
+                .help("Use Eject key")
+                .disabled(shortcut.config.isEjectKey && !shortcut.isRecording)
             }
 
-            Text("Press this key on either Mac to switch input control.")
+            Text("Press this key on either Mac to switch input control. Eject ⏏ is supported.")
                 .font(.caption2)
                 .foregroundColor(.gray)
                 .fixedSize(horizontal: false, vertical: true)

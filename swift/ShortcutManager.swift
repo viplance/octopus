@@ -84,12 +84,30 @@ class ShortcutManager: ObservableObject {
         }
     }
 
-    @Published var isRecording = false
+    @Published var isRecording = false {
+        didSet {
+            // Whenever the user enters recording mode, make sure the tap is
+            // alive. The tap can be torn down by the system if Accessibility
+            // is revoked, or invalidated by macOS after a watchdog event.
+            if isRecording { ensureTapAlive() }
+        }
+    }
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
     private static let defaultsKey = "shortcutConfig"
+
+    private func ensureTapAlive() {
+        if let tap = eventTap, CFMachPortIsValid(tap) {
+            CGEvent.tapEnable(tap: tap, enable: true)
+            return
+        }
+        // Tap is missing or invalid — rebuild it.
+        eventTap = nil
+        runLoopSource = nil
+        setupEventTap()
+    }
 
     init() {
         if let data = UserDefaults.standard.data(forKey: Self.defaultsKey),
@@ -134,12 +152,17 @@ class ShortcutManager: ObservableObject {
                 if let tap = manager.eventTap {
                     CGEvent.tapEnable(tap: tap, enable: true)
                 }
-                return Unmanaged.passRetained(event)
+                return nil
             }
 
             if manager.isRecording {
                 if type == .keyDown {
                     let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+                    // Escape cancels recording without changing the binding.
+                    if keyCode == 53 {
+                        DispatchQueue.main.async { manager.isRecording = false }
+                        return nil
+                    }
                     let modOnly: CGEventFlags = [.maskControl, .maskAlternate, .maskShift, .maskCommand]
                     let mods = event.flags.rawValue & modOnly.rawValue
                     DispatchQueue.main.async {
@@ -147,6 +170,23 @@ class ShortcutManager: ObservableObject {
                         manager.isRecording = false
                     }
                     return nil
+                }
+                // Capture the Eject key (NX_SYSDEFINED, subtype 8, keyCode 14)
+                // so users can rebind back to Eject through the recording UI.
+                if type.rawValue == 14 {
+                    if let ev = NSEvent(cgEvent: event), ev.subtype.rawValue == 8 {
+                        let data1 = ev.data1
+                        let keyCode = (data1 & 0xFFFF0000) >> 16
+                        let keyFlags = (data1 & 0x0000FFFF)
+                        // keyFlags 0x0A = key down for the eject key family.
+                        if keyCode == 14 && keyFlags == 0x0A {
+                            DispatchQueue.main.async {
+                                manager.config = .ejectKey
+                                manager.isRecording = false
+                            }
+                            return nil
+                        }
+                    }
                 }
                 return Unmanaged.passRetained(event)
             }
@@ -191,6 +231,9 @@ class ShortcutManager: ObservableObject {
             // source serviced continuously, or macOS will stop delivering input.
             CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
+            NetworkManager.log("[Shortcut] event tap created and enabled")
+        } else {
+            NetworkManager.log("[Shortcut] FAILED to create event tap — Accessibility permission likely missing")
         }
     }
 

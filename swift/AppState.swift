@@ -11,6 +11,7 @@ class AppState: ObservableObject {
     @Published var launchAtLogin = false
     @Published var showConnectionLostAlert = false
     @Published var isAccessibilityGranted: Bool = AXIsProcessTrusted()
+    @Published var isInputMonitoringGranted: Bool = PermissionsHelper.isInputMonitoringGranted()
 
     enum ConnectionStatus: String {
         case disconnected = "Disconnected"
@@ -44,17 +45,30 @@ class AppState: ObservableObject {
     init() {
         setupBindings()
         deviceManager.refreshDevices()
-        startAccessibilityPolling()
+        // Trigger the Input Monitoring system prompt on first launch.
+        // Without this, cghidEventTap creates successfully but receives zero
+        // events — shortcuts and input capture silently do nothing.
+        PermissionsHelper.requestInputMonitoring()
+        startPermissionPolling()
         networkManager.start()
     }
 
-    // Poll AXIsProcessTrusted every second until granted, then stop.
-    // This auto-dismisses the warning as soon as the user enables access
-    // in System Settings without requiring an app restart.
-    private func startAccessibilityPolling() {
-        guard !isAccessibilityGranted else { return }
-        accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
-            if AXIsProcessTrusted() {
+    // Poll both Accessibility and Input Monitoring grants every second.
+    // Once either flips from denied to granted, restart the process so
+    // CGEventTap and other AX/IOKit-dependent subsystems initialize with
+    // the permission active. macOS does not deliver the new grant to the
+    // already-running process for these particular permissions.
+    private func startPermissionPolling() {
+        guard !isAccessibilityGranted || !isInputMonitoringGranted else { return }
+        accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            let ax = AXIsProcessTrusted()
+            let im = PermissionsHelper.isInputMonitoringGranted()
+            Task { @MainActor in
+                self.isAccessibilityGranted = ax
+                self.isInputMonitoringGranted = im
+            }
+            if ax && im {
                 timer.invalidate()
                 // Restart the process so CGEventTap and other AX-dependent
                 // systems initialize with the permission active. macOS does not

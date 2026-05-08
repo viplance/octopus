@@ -54,6 +54,10 @@ function buildInfoPlist() {
   <array>
     <string>_octopussync._tcp</string>
   </array>
+  <key>NSInputMonitoringUsageDescription</key>
+  <string>OctopusSync needs to monitor keyboard and mouse input to forward it to the peer Mac and to detect the toggle shortcut.</string>
+  <key>NSAccessibilityUsageDescription</key>
+  <string>OctopusSync needs Accessibility access to capture and inject keyboard and mouse events.</string>
 </dict>
 </plist>
 `;
