@@ -47,13 +47,10 @@ class DeviceManager: ObservableObject {
         for device in hidDevices {
             let name = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "Unknown Device"
             
-            // Check if it's a Bluetooth device (often has a transport type of Bluetooth)
-            _ = IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String
-            
-            // We allow Apple Internal devices so the user can share their MacBook keyboard/trackpad.
-            // if name.contains("Internal") || name.contains("Built-in") {
-            //     continue
-            // }
+            let transport = IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? ""
+            let isInternal = name.contains("Internal") || name.contains("Built-in")
+                || transport == "SPI" || transport == "I2C"
+            if isInternal { continue }
             
             let usagePage = IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsagePageKey as CFString) as? Int ?? 0
             let usage = IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsageKey as CFString) as? Int ?? 0
