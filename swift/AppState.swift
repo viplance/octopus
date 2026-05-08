@@ -29,6 +29,18 @@ class AppState: ObservableObject {
     private var shortcutSyncCancellable: AnyCancellable?
     private var accessibilityTimer: Timer?
 
+    private static let selectedDevicesKey = "selectedDeviceNames"
+
+    private func savedSelectedNames() -> Set<String> {
+        let arr = UserDefaults.standard.stringArray(forKey: Self.selectedDevicesKey) ?? []
+        return Set(arr)
+    }
+
+    private func persistSelectedNames() {
+        let names = availableDevices.filter(\.isSelected).map(\.name)
+        UserDefaults.standard.set(names, forKey: Self.selectedDevicesKey)
+    }
+
     init() {
         setupBindings()
         deviceManager.refreshDevices()
@@ -86,7 +98,15 @@ class AppState: ObservableObject {
 
         deviceManager.$devices
             .receive(on: RunLoop.main)
-            .assign(to: \.availableDevices, on: self)
+            .sink { [weak self] devices in
+                guard let self else { return }
+                let saved = self.savedSelectedNames()
+                self.availableDevices = devices.map { device in
+                    var d = device
+                    d.isSelected = saved.contains(d.name)
+                    return d
+                }
+            }
             .store(in: &cancellables)
 
         networkManager.onEventReceived = { [weak self] event in
@@ -170,6 +190,7 @@ class AppState: ObservableObject {
     func toggleDeviceSelection(_ device: BluetoothDevice) {
         if let index = availableDevices.firstIndex(where: { $0.id == device.id }) {
             availableDevices[index].isSelected.toggle()
+            persistSelectedNames()
             if isSharingActive {
                 inputManager.stopCapture()
                 inputManager.startCapture(devices: availableDevices.filter { $0.isSelected })

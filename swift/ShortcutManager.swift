@@ -98,7 +98,15 @@ class ShortcutManager: ObservableObject {
         } else {
             self.config = .ejectKey
         }
-        setupEventTap()
+        // Defer tap installation onto the main runloop. Installing in init can
+        // attach the source to a transient SwiftUI initialization runloop, which
+        // stops being serviced once init returns — that starves the active,
+        // .headInsertEventTap and macOS stops delivering input system-wide.
+        if Thread.isMainThread {
+            setupEventTap()
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.setupEventTap() }
+        }
     }
 
     private func saveConfig() {
@@ -108,6 +116,9 @@ class ShortcutManager: ObservableObject {
     }
 
     private func setupEventTap() {
+        // Idempotent: avoid stacking taps if init runs twice (e.g. accessibility-grant relaunch path).
+        if eventTap != nil { return }
+
         let systemDefinedEventMask = UInt64(1) << 14
         let eventMask = (1 << CGEventType.flagsChanged.rawValue) |
                         (1 << CGEventType.keyDown.rawValue) |
@@ -116,6 +127,15 @@ class ShortcutManager: ObservableObject {
         let callback: CGEventTapCallBack = { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
             guard let refcon else { return Unmanaged.passRetained(event) }
             let manager = Unmanaged<ShortcutManager>.fromOpaque(refcon).takeUnretainedValue()
+
+            // macOS disables taps that overrun their watchdog or are temporarily
+            // suspended (screen lock, login window). Re-enable so we don't go silent.
+            if type == .tapDisabledByUserInput || type == .tapDisabledByTimeout {
+                if let tap = manager.eventTap {
+                    CGEvent.tapEnable(tap: tap, enable: true)
+                }
+                return Unmanaged.passRetained(event)
+            }
 
             if manager.isRecording {
                 if type == .keyDown {
@@ -166,7 +186,10 @@ class ShortcutManager: ObservableObject {
 
         if let tap = eventTap {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+            // Always attach to the main runloop, not the calling thread's runloop.
+            // Active event taps placed at .headInsertEventTap MUST have their
+            // source serviced continuously, or macOS will stop delivering input.
+            CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
         }
     }
@@ -177,7 +200,7 @@ class ShortcutManager: ObservableObject {
             CFMachPortInvalidate(tap)
         }
         if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
     }
 }

@@ -65,11 +65,13 @@ class InputManager {
         
         if let tap = eventTap {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+            // Attach to the main runloop unconditionally. An active head-insert tap
+            // whose source isn't serviced will freeze input system-wide.
+            CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
         }
     }
-    
+
     func stopCapture() {
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
@@ -77,7 +79,7 @@ class InputManager {
             eventTap = nil
         }
         if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
             runLoopSource = nil
         }
     }
