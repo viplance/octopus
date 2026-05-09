@@ -293,7 +293,8 @@ class NetworkManager: ObservableObject {
             }
             let total = 4 + Int(length)
             guard recvBuffer.count >= total else { break }
-            let payload = recvBuffer.subdata(in: 4..<total)
+            let start = recvBuffer.startIndex
+            let payload = recvBuffer.subdata(in: start + 4 ..< start + total)
             recvBuffer.removeFirst(total)
             if let event = try? JSONDecoder().decode(InputEvent.self, from: payload) {
                 onEventReceived?(event)
