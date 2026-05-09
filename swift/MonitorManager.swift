@@ -105,38 +105,52 @@ class MonitorManager: ObservableObject {
 
     // MARK: - Direct mode display control
 
+    private func setExternalDisplaysEnabled(_ enabled: Bool) {
+        let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
+        guard let coreDisplayHandle = dlopen("/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay", RTLD_NOW) else { return }
+        
+        typealias CGSConfigureDisplayEnabledType = @convention(c) (CGDisplayConfigRef, CGDirectDisplayID, Bool) -> CGError
+        guard let sym = dlsym(coreDisplayHandle, "CGSConfigureDisplayEnabled") else { return }
+        let CGSConfigureDisplayEnabled = unsafeBitCast(sym, to: CGSConfigureDisplayEnabledType.self)
+        
+        let maxDisplays: UInt32 = 10
+        var onlineDisplays = [CGDirectDisplayID](repeating: 0, count: Int(maxDisplays))
+        var displayCount: UInt32 = 0
+        CGGetOnlineDisplayList(maxDisplays, &onlineDisplays, &displayCount)
+        
+        var configRef: CGDisplayConfigRef? = nil
+        CGBeginDisplayConfiguration(&configRef)
+        guard let config = configRef else { return }
+        
+        var changed = false
+        for i in 0..<Int(displayCount) {
+            let id = onlineDisplays[i]
+            if CGDisplayIsBuiltin(id) == 0 { // External display
+                _ = CGSConfigureDisplayEnabled(config, id, enabled)
+                changed = true
+            }
+        }
+        
+        if changed {
+            CGCompleteDisplayConfiguration(config, .forSession)
+        } else {
+            CGCancelDisplayConfiguration(config)
+        }
+    }
+
     private func sleepDisplay() {
-        // pmset displaysleepnow puts external displays into DPMS standby.
-        // The monitor sees no active signal from this Mac and auto-switches
-        // to the other connected Mac's signal.
-        DispatchQueue.global(qos: .background).async {
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-            task.arguments = ["displaysleepnow"]
-            try? task.run()
-            task.waitUntilExit()
+        // Soft-disable only external monitors by dropping their signal programmatically.
+        // The monitor sees no active signal and auto-switches to the peer's active signal.
+        // By avoiding `pmset displaysleepnow`, we keep the internal screen on and prevent the Mac from locking.
+        DispatchQueue.main.async {
+            self.setExternalDisplaysEnabled(false)
         }
     }
 
     private func wakeDisplay() {
-        // Move the mouse cursor 1 pixel and back — the most reliable way to
-        // wake a DPMS-sleeping display without extra tools.
-        let script = """
-        tell application "System Events"
-            set mp to position of mouse
-            set x to item 1 of mp
-            set y to item 2 of mp
-            set position of mouse to {x + 1, y}
-            delay 0.05
-            set position of mouse to {x, y}
-        end tell
-        """
-        DispatchQueue.global(qos: .background).async {
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            task.arguments = ["-e", script]
-            try? task.run()
-            task.waitUntilExit()
+        // Re-enable external monitors to wake them up and regain their focus.
+        DispatchQueue.main.async {
+            self.setExternalDisplaysEnabled(true)
         }
     }
 
