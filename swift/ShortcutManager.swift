@@ -173,8 +173,9 @@ class ShortcutManager: ObservableObject {
                         let data1 = ev.data1
                         let keyCode = (data1 & 0xFFFF0000) >> 16
                         let keyFlags = (data1 & 0x0000FFFF)
+                        let isKeyDown = ((keyFlags & 0xFF00) >> 8) == 0x0A
                         // keyFlags 0x0A = key down for the eject key family.
-                        if keyCode == 14 && keyFlags == 0x0A {
+                        if keyCode == 14 && isKeyDown {
                             DispatchQueue.main.async {
                                 manager.config = .ejectKey
                                 manager.isRecording = false
@@ -193,7 +194,8 @@ class ShortcutManager: ObservableObject {
                         let data1 = ev.data1
                         let keyCode = (data1 & 0xFFFF0000) >> 16
                         let keyFlags = (data1 & 0x0000FFFF)
-                        if keyCode == 14 && keyFlags == 0x0A {
+                        let isKeyDown = ((keyFlags & 0xFF00) >> 8) == 0x0A
+                        if keyCode == 14 && isKeyDown {
                             manager.onToggleShortcut?()
                         }
                     }

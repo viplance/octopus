@@ -29,6 +29,7 @@ class AppState: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
     private var shortcutSyncCancellable: AnyCancellable?
+    private var monitorSyncCancellable: AnyCancellable?
     private var accessibilityTimer: Timer?
     private var permissionWatchdog: Timer?
     private var sleepAssertionID: IOPMAssertionID = 0
@@ -155,6 +156,16 @@ class AppState: ObservableObject {
                 return
             }
 
+            if let ctrl = event.control, ctrl.hasPrefix("monitorSync:") {
+                let isEnabled = String(ctrl.dropFirst("monitorSync:".count)) == "true"
+                Task { @MainActor in
+                    if self.monitorManager.config.enabled != isEnabled {
+                        self.monitorManager.config.enabled = isEnabled
+                    }
+                }
+                return
+            }
+
             self.inputManager.injectEvent(event)
 
             let now = Date().timeIntervalSince1970
@@ -196,6 +207,18 @@ class AppState: ObservableObject {
                                                control: "shortcutSync:\(str)")
                     self.networkManager.sendEvent(syncEvent)
                 }
+            }
+
+        monitorSyncCancellable = monitorManager.$config
+            .map(\.enabled)
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] isEnabled in
+                guard let self, self.connectionStatus == .connected else { return }
+                let syncEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil,
+                                           keyCode: nil, isDown: nil, flags: nil, rawData: nil,
+                                           control: "monitorSync:\(isEnabled)")
+                self.networkManager.sendEvent(syncEvent)
             }
     }
 
