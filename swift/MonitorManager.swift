@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CoreGraphics
 
 // Manages monitor input switching with two modes:
 //
@@ -105,6 +106,8 @@ class MonitorManager: ObservableObject {
 
     // MARK: - Direct mode display control
 
+    private var disabledDisplayIDs: [CGDirectDisplayID] = []
+
     private func setExternalDisplaysEnabled(_ enabled: Bool) {
         let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
         guard let coreDisplayHandle = dlopen("/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay", RTLD_NOW) else { return }
@@ -113,22 +116,33 @@ class MonitorManager: ObservableObject {
         guard let sym = dlsym(coreDisplayHandle, "CGSConfigureDisplayEnabled") else { return }
         let CGSConfigureDisplayEnabled = unsafeBitCast(sym, to: CGSConfigureDisplayEnabledType.self)
         
-        let maxDisplays: UInt32 = 10
-        var onlineDisplays = [CGDirectDisplayID](repeating: 0, count: Int(maxDisplays))
-        var displayCount: UInt32 = 0
-        CGGetOnlineDisplayList(maxDisplays, &onlineDisplays, &displayCount)
-        
         var configRef: CGDisplayConfigRef? = nil
         CGBeginDisplayConfiguration(&configRef)
         guard let config = configRef else { return }
         
         var changed = false
-        for i in 0..<Int(displayCount) {
-            let id = onlineDisplays[i]
-            if CGDisplayIsBuiltin(id) == 0 { // External display
-                _ = CGSConfigureDisplayEnabled(config, id, enabled)
+        
+        if !enabled {
+            let maxDisplays: UInt32 = 10
+            var onlineDisplays = [CGDirectDisplayID](repeating: 0, count: Int(maxDisplays))
+            var displayCount: UInt32 = 0
+            CGGetOnlineDisplayList(maxDisplays, &onlineDisplays, &displayCount)
+            
+            disabledDisplayIDs.removeAll()
+            for i in 0..<Int(displayCount) {
+                let id = onlineDisplays[i]
+                if CGDisplayIsBuiltin(id) == 0 { // External display
+                    _ = CGSConfigureDisplayEnabled(config, id, false)
+                    disabledDisplayIDs.append(id)
+                    changed = true
+                }
+            }
+        } else {
+            for id in disabledDisplayIDs {
+                _ = CGSConfigureDisplayEnabled(config, id, true)
                 changed = true
             }
+            disabledDisplayIDs.removeAll()
         }
         
         if changed {
