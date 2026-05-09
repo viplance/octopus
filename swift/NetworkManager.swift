@@ -17,6 +17,9 @@ class NetworkManager: ObservableObject {
     private let instanceID = UUID().uuidString
 
     private var recvBuffer = Data()
+    
+    private let jsonEncoder = JSONEncoder()
+    private let jsonDecoder = JSONDecoder()
 
     // MARK: - Lifecycle
 
@@ -264,7 +267,7 @@ class NetworkManager: ObservableObject {
     }
 
     private func encodeFrame(_ event: InputEvent) -> Data? {
-        guard let payload = try? JSONEncoder().encode(event) else { return nil }
+        guard let payload = try? jsonEncoder.encode(event) else { return nil }
         var length = UInt32(payload.count).bigEndian
         var frame = Data(bytes: &length, count: 4)
         frame.append(payload)
@@ -304,7 +307,7 @@ class NetworkManager: ObservableObject {
             let start = recvBuffer.startIndex
             let payload = recvBuffer.subdata(in: start + 4 ..< start + total)
             recvBuffer.removeFirst(total)
-            if let event = try? JSONDecoder().decode(InputEvent.self, from: payload) {
+            if let event = try? jsonDecoder.decode(InputEvent.self, from: payload) {
                 onEventReceived?(event)
             }
         }
