@@ -109,10 +109,13 @@ class MonitorManager: ObservableObject {
         // pmset displaysleepnow puts external displays into DPMS standby.
         // The monitor sees no active signal from this Mac and auto-switches
         // to the other connected Mac's signal.
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        task.arguments = ["displaysleepnow"]
-        try? task.run()
+        DispatchQueue.global(qos: .background).async {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+            task.arguments = ["displaysleepnow"]
+            try? task.run()
+            task.waitUntilExit()
+        }
     }
 
     private func wakeDisplay() {
@@ -128,10 +131,13 @@ class MonitorManager: ObservableObject {
             set position of mouse to {x, y}
         end tell
         """
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", script]
-        try? task.run()
+        DispatchQueue.global(qos: .background).async {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            task.arguments = ["-e", script]
+            try? task.run()
+            task.waitUntilExit()
+        }
     }
 
     // MARK: - SmartThings API
