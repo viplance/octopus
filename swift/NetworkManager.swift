@@ -14,6 +14,7 @@ class NetworkManager: ObservableObject {
 
     private let serviceType = "_octopussync._tcp"
     private let myName: String = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+    private let instanceID = UUID().uuidString
 
     private var recvBuffer = Data()
 
@@ -62,7 +63,8 @@ class NetworkManager: ObservableObject {
 
         do {
             listener = try NWListener(using: params)
-            listener?.service = NWListener.Service(name: myName, type: serviceType)
+            let txtRecord = NWTXTRecord(["id": instanceID])
+            listener?.service = NWListener.Service(name: myName, type: serviceType, txtRecord: txtRecord)
 
             listener?.stateUpdateHandler = { [weak self] state in
                 Self.log("[Listener] state: \(state)")
@@ -131,7 +133,7 @@ class NetworkManager: ObservableObject {
             }
 
             for result in results {
-                if self.isOwnEndpoint(result.endpoint) {
+                if self.isOwnResult(result) {
                     Self.log("[Browser] skipping own endpoint: \(result.endpoint)")
                     continue
                 }
@@ -160,10 +162,13 @@ class NetworkManager: ObservableObject {
     }
 
     // Checks if a discovered endpoint belongs to this Mac.
-    // Bonjour may suffix "(2)", "(3)" etc. when a service is re-registered
-    // without properly cancelling the previous one, so we strip the suffix.
-    private func isOwnEndpoint(_ endpoint: NWEndpoint) -> Bool {
-        if case .service(let name, _, _, _) = endpoint {
+    private func isOwnResult(_ result: NWBrowser.Result) -> Bool {
+        if case .bonjour(let txtRecord) = result.metadata {
+            if let peerID = txtRecord.dictionary["id"], peerID == instanceID {
+                return true
+            }
+        }
+        if case .service(let name, _, _, _) = result.endpoint {
             return baseServiceName(name) == myName
         }
         return false
@@ -207,6 +212,15 @@ class NetworkManager: ObservableObject {
                     Self.log("[Connection] READY: \(conn.endpoint)")
                     self.connectionStatus = .connected
                     self.receiveNextFrame()
+                case .preparing:
+                    Self.log("[Connection] PREPARING: \(conn.endpoint)")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak conn] in
+                        guard let self, let conn, self.connection === conn else { return }
+                        if conn.state == .preparing || conn.state == .setup {
+                            Self.log("[Connection] stuck in preparing, tearing down")
+                            self.teardown()
+                        }
+                    }
                 case .failed(let err):
                     Self.log("[Connection] FAILED: \(err)")
                     self.teardown()
