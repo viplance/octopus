@@ -1,6 +1,5 @@
 import Foundation
 import CoreGraphics
-import AppKit
 
 class InputManager {
     var onEventCaptured: ((InputEvent) -> Void)?
@@ -67,30 +66,20 @@ class InputManager {
                 return Unmanaged.passRetained(event)
             }
 
-            // Detect toggle shortcut before capturing. This tap is installed
-            // AFTER ShortcutManager's tap (headInsertEventTap = newest first),
-            // so ShortcutManager never sees events while capture is active.
-            if let config = manager.shortcutConfig {
-                if config.isEjectKey {
-                    if type.rawValue == 14 {
-                        if let ev = NSEvent(cgEvent: event), ev.subtype.rawValue == 8 {
-                            let data1 = ev.data1
-                            let keyCode = (data1 & 0xFFFF0000) >> 16
-                            let keyFlags = (data1 & 0x0000FFFF)
-                            if keyCode == 14 && keyFlags == 0x0A {
-                                DispatchQueue.main.async { manager.onToggleShortcut?() }
-                                return nil
-                            }
-                        }
-                    }
-                } else if type == .keyDown {
-                    let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
-                    let modOnly: CGEventFlags = [.maskControl, .maskAlternate, .maskShift, .maskCommand]
-                    let mods = event.flags.rawValue & modOnly.rawValue
-                    if keyCode == config.keyCode && mods == config.modifiers {
-                        DispatchQueue.main.async { manager.onToggleShortcut?() }
-                        return nil
-                    }
+            // NX_SYSDEFINED events (volume, brightness, media, eject) pass
+            // through so they act locally. When the shortcut is eject key,
+            // ShortcutManager (on the main thread) handles toggle detection.
+            if type.rawValue == 14 {
+                return Unmanaged.passRetained(event)
+            }
+
+            if let config = manager.shortcutConfig, !config.isEjectKey, type == .keyDown {
+                let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+                let modOnly: CGEventFlags = [.maskControl, .maskAlternate, .maskShift, .maskCommand]
+                let mods = event.flags.rawValue & modOnly.rawValue
+                if keyCode == config.keyCode && mods == config.modifiers {
+                    DispatchQueue.main.async { manager.onToggleShortcut?() }
+                    return nil
                 }
             }
 
