@@ -14,10 +14,14 @@ class InputManager {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var tapThread: Thread?
+    private var savedCursorPosition: CGPoint?
     private let processingQueue = DispatchQueue(label: "com.octopus.input-processing", qos: .userInteractive)
     
     func startCapture(devices: [BluetoothDevice]) {
         guard !devices.isEmpty else { return }
+        
+        let locEvent = CGEvent(source: nil)
+        savedCursorPosition = locEvent?.location
         
         // In a full implementation, we would selectively filter based on device ID.
         // For standard CGEventTap, it's global. We capture user input and suppress it locally.
@@ -80,6 +84,12 @@ class InputManager {
                 if keyCode == config.keyCode && mods == config.modifiers {
                     DispatchQueue.main.async { manager.onToggleShortcut?() }
                     return nil
+                }
+            }
+
+            if type == .mouseMoved || type == .leftMouseDragged || type == .rightMouseDragged {
+                if let pos = manager.savedCursorPosition {
+                    CGWarpMouseCursorPosition(pos)
                 }
             }
 

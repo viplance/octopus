@@ -124,6 +124,9 @@ struct ContentView: View {
             Text("The peer Mac is not connected. Sharing has been paused. Reconnect and try again.")
         }
         .onAppear {}
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            appState.networkManager.stop()
+        }
     }
 
     private var statusColor: Color {

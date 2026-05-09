@@ -59,6 +59,10 @@ class NetworkManager: ObservableObject {
         let params = NWParameters.tcp
         if let tcp = params.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
             tcp.noDelay = true
+            tcp.enableKeepalive = true
+            tcp.keepaliveIdle = 2
+            tcp.keepaliveInterval = 2
+            tcp.keepaliveCount = 3
         }
 
         do {
@@ -194,6 +198,10 @@ class NetworkManager: ObservableObject {
         let params = NWParameters.tcp
         if let tcp = params.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
             tcp.noDelay = true
+            tcp.enableKeepalive = true
+            tcp.keepaliveIdle = 2
+            tcp.keepaliveInterval = 2
+            tcp.keepaliveCount = 3
         }
         setupConnection(NWConnection(to: endpoint, using: params))
     }
