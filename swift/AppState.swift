@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import ServiceManagement
+import IOKit.pwr_mgt
 
 @MainActor
 class AppState: ObservableObject {
@@ -30,6 +31,7 @@ class AppState: ObservableObject {
     private var shortcutSyncCancellable: AnyCancellable?
     private var accessibilityTimer: Timer?
     private var permissionWatchdog: Timer?
+    private var sleepAssertionID: IOPMAssertionID = 0
 
     private static let selectedDevicesKey = "selectedDeviceNames"
 
@@ -210,6 +212,10 @@ class AppState: ObservableObject {
         monitorManager.switchToThisMac()
         showConnectionLostAlert = true
         stopPermissionWatchdog()
+        if sleepAssertionID != 0 {
+            IOPMAssertionRelease(sleepAssertionID)
+            sleepAssertionID = 0
+        }
         isAccessibilityGranted = AXIsProcessTrusted()
         isInputMonitoringGranted = PermissionsHelper.isInputMonitoringGranted()
         startPermissionPolling()
@@ -259,10 +265,24 @@ class AppState: ObservableObject {
             monitorManager.switchToPeer()
             inputManager.startCapture(devices: availableDevices.filter { $0.isSelected })
             startPermissionWatchdog()
+            
+            // Prevent this Mac from entering idle sleep while sharing, 
+            // especially since its display is asleep and it appears idle.
+            if sleepAssertionID == 0 {
+                IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
+                                            IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                                            "OctopusSync is actively sharing input" as CFString,
+                                            &sleepAssertionID)
+            }
         } else {
             monitorManager.switchToThisMac()
             inputManager.stopCapture()
             stopPermissionWatchdog()
+            
+            if sleepAssertionID != 0 {
+                IOPMAssertionRelease(sleepAssertionID)
+                sleepAssertionID = 0
+            }
         }
     }
 
