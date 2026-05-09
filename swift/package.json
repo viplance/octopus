@@ -7,6 +7,7 @@
     "dmg": "node ./scripts/dmg.mjs",
     "dist": "pnpm run build && pnpm run dmg",
     "start": "pkill -x OctopusSync; open build/OctopusSync.app",
+    "stop": "pkill -x OctopusSync",
     "relaunch": "node ./scripts/restart.mjs"
   }
 }
