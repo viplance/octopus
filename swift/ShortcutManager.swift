@@ -147,7 +147,7 @@ class ShortcutManager: ObservableObject {
                 if let tap = manager.eventTap {
                     CGEvent.tapEnable(tap: tap, enable: true)
                 }
-                return nil
+                return Unmanaged.passRetained(event)
             }
 
             if manager.isRecording {
@@ -214,7 +214,7 @@ class ShortcutManager: ObservableObject {
         let info = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         eventTap = CGEvent.tapCreate(tap: .cghidEventTap,
                                      place: .headInsertEventTap,
-                                     options: .defaultTap,
+                                     options: .listenOnly,
                                      eventsOfInterest: CGEventMask(eventMask),
                                      callback: callback,
                                      userInfo: info)
