@@ -63,6 +63,44 @@ function buildInfoPlist() {
 `;
 }
 
+// Stop any running instance and unregister stale LaunchServices entries.
+// Self-signed builds get a new code signature each time, so LS keeps
+// accumulating "different apps" with the same bundle ID. After many builds,
+// `open build/OctopusSync.app` returns errAETimeout (-1712) because LS sends
+// AppleEvents to ghost PSNs and times out. Sweep them before each build.
+const LSREG = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+const BUNDLE_ID = "enotix.OctopusSync";
+
+console.log("Stopping any running instance...");
+try { execSync(`pkill -x ${appName}`, { stdio: "pipe" }); } catch { /* not running */ }
+
+console.log("Sweeping stale LaunchServices registrations...");
+try {
+  const dump = execSync(`${LSREG} -dump`, { stdio: ["pipe", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 }).toString();
+  // Match each registration block; capture its path. Each block starts with
+  // "path:" and we keep paths whose block contains our bundle identifier.
+  const blocks = dump.split(/\n(?=path:\s)/);
+  const stalePaths = new Set();
+  for (const block of blocks) {
+    if (!block.includes(`identifier:                 ${BUNDLE_ID}`)) continue;
+    const m = block.match(/^path:\s+(.+?)(?:\s+\(0x[0-9a-f]+\))?$/m);
+    if (!m) continue;
+    const p = m[1].trim();
+    // Keep the build path we're about to overwrite — lsregister will refresh it.
+    if (p === appBundle) continue;
+    stalePaths.add(p);
+  }
+  for (const p of stalePaths) {
+    try {
+      execSync(`${LSREG} -u "${p}"`, { stdio: "pipe" });
+      console.log(`  unregistered: ${p}`);
+    } catch { /* already gone */ }
+  }
+  if (stalePaths.size === 0) console.log("  (none found)");
+} catch (e) {
+  console.warn(`  Warning: LaunchServices sweep failed: ${e.message}`);
+}
+
 console.log("Cleaning build dir...");
 await rm(buildDir, { recursive: true, force: true });
 

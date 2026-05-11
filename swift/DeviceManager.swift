@@ -5,12 +5,29 @@ import Combine
 class DeviceManager: ObservableObject {
     @Published var devices: [BluetoothDevice] = []
     private var hidManager: IOHIDManager?
-    
+    // Serial background queue so IOHID calls never run on the main thread.
+    // On recent macOS, IOHIDManagerSetDeviceMatchingMultiple can block for
+    // seconds inside AppleSyntheticGameController's IOServiceOpen — running
+    // it on main makes the app "Not responding" at launch.
+    private let hidQueue = DispatchQueue(label: "enotix.OctopusSync.hid", qos: .userInitiated)
+
     init() {
         hidManager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
     }
-    
+
+    deinit {
+        if let mgr = hidManager {
+            IOHIDManagerClose(mgr, IOOptionBits(kIOHIDOptionsTypeNone))
+        }
+    }
+
     func refreshDevices() {
+        hidQueue.async { [weak self] in
+            self?.refreshDevicesSync()
+        }
+    }
+
+    private func refreshDevicesSync() {
         guard let hidManager = hidManager else { return }
         
         // Define criteria for HID devices

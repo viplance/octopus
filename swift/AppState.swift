@@ -55,6 +55,29 @@ class AppState: ObservableObject {
         PermissionsHelper.requestInputMonitoring()
         startPermissionPolling()
         networkManager.start()
+
+        // Without explicit teardown on quit, the CGEventTap mach port and the
+        // IOPMAssertion stay registered with the kernel after the process exits,
+        // which leaves the process in an unreapable 'E' state. Over many runs
+        // these zombies accumulate and break `open` with errAETimeout (-1712)
+        // because LaunchServices keeps trying to AppleEvent the dead PSNs.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleTerminate() {
+        accessibilityTimer?.invalidate()
+        accessibilityTimer = nil
+        stopPermissionWatchdog()
+        inputManager.stopCapture()
+        if sleepAssertionID != 0 {
+            IOPMAssertionRelease(sleepAssertionID)
+            sleepAssertionID = 0
+        }
     }
 
     // Poll both Accessibility and Input Monitoring grants every second.

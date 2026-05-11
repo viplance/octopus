@@ -14,8 +14,13 @@ class InputManager {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var tapThread: Thread?
+    private var tapRunLoop: CFRunLoop?
     private var savedCursorPosition: CGPoint?
     private let processingQueue = DispatchQueue(label: "com.octopus.input-processing", qos: .userInteractive)
+
+    deinit {
+        stopCapture()
+    }
     
     func startCapture(devices: [BluetoothDevice]) {
         guard !devices.isEmpty else { return }
@@ -114,7 +119,16 @@ class InputManager {
         if let tap = eventTap {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             let source = runLoopSource!
-            let thread = Thread {
+            // Capture the tap thread's CFRunLoop so stopCapture() can call
+            // CFRunLoopStop() on it. Without this, the thread leaks past app
+            // termination — it holds the event-tap mach port, the kernel keeps
+            // the process registered, and launchd cannot reap it. Result: a
+            // zombie OctopusSync entry per session that LaunchServices keeps
+            // trying to AppleEvent on next launch, eventually returning -1712.
+            let runLoopReady = DispatchSemaphore(value: 0)
+            let thread = Thread { [weak self] in
+                self?.tapRunLoop = CFRunLoopGetCurrent()
+                runLoopReady.signal()
                 CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
                 CGEvent.tapEnable(tap: tap, enable: true)
                 CFRunLoopRun()
@@ -123,6 +137,7 @@ class InputManager {
             thread.name = "com.octopus.input-tap"
             thread.start()
             tapThread = thread
+            _ = runLoopReady.wait(timeout: .now() + 1.0)
         } else {
             // tapCreate returns nil when Accessibility / Input Monitoring is
             // missing. Surface this so the caller can abort sharing instead of
@@ -138,7 +153,14 @@ class InputManager {
             CFMachPortInvalidate(tap)
             eventTap = nil
         }
-        runLoopSource = nil
+        if let source = runLoopSource {
+            CFRunLoopSourceInvalidate(source)
+            runLoopSource = nil
+        }
+        if let loop = tapRunLoop {
+            CFRunLoopStop(loop)
+            tapRunLoop = nil
+        }
         tapThread = nil
     }
     
