@@ -109,7 +109,6 @@ class MonitorManager: ObservableObject {
     private var disabledDisplayIDs: [CGDirectDisplayID] = []
 
     private func setExternalDisplaysEnabled(_ enabled: Bool) {
-        let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
         guard let coreDisplayHandle = dlopen("/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay", RTLD_NOW) else { return }
         
         typealias CGSConfigureDisplayEnabledType = @convention(c) (CGDisplayConfigRef, CGDirectDisplayID, Bool) -> CGError
