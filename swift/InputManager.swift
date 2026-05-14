@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import AppKit
 
 class InputManager {
     var onEventCaptured: ((InputEvent) -> Void)?
@@ -75,11 +76,20 @@ class InputManager {
                 return Unmanaged.passRetained(event)
             }
 
-            // NX_SYSDEFINED events (volume, brightness, media, eject) pass
-            // through so they act locally. When the shortcut is eject key,
-            // ShortcutManager (on the main thread) handles toggle detection.
+            // When the shortcut is Eject, detect it among NX_SYSDEFINED
+            // events and fire the toggle instead of forwarding.
             if type.rawValue == 14 {
-                return Unmanaged.passRetained(event)
+                if let config = manager.shortcutConfig, config.isEjectKey,
+                   let nsEvent = NSEvent(cgEvent: event), nsEvent.subtype.rawValue == 8 {
+                    let data1 = nsEvent.data1
+                    let sysKeyCode = (data1 & 0xFFFF0000) >> 16
+                    let keyFlags = (data1 & 0x0000FFFF)
+                    let isKeyDown = ((keyFlags & 0xFF00) >> 8) == 0x0A
+                    if sysKeyCode == 14 && isKeyDown {
+                        DispatchQueue.main.async { manager.onToggleShortcut?() }
+                        return nil
+                    }
+                }
             }
 
             if let config = manager.shortcutConfig, !config.isEjectKey, type == .keyDown {
