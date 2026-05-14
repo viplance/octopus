@@ -69,11 +69,29 @@ class AppState: ObservableObject {
         )
     }
 
+    // Schedules an out-of-process relaunch and quits. The earlier inline
+    // version (`Process()` + `terminate(nil)`) raced: `open` ran while our
+    // PID was still dying, which Launch Services rejected with -600 and
+    // sometimes wedged the bundle slot until logout. A detached shell that
+    // waits for our PID to disappear before invoking `open` removes the race.
+    private func relaunchAfterPermissionGrant() {
+        let bundlePath = Bundle.main.bundleURL.path
+        let pid = getpid()
+        let script = "while kill -0 \(pid) 2>/dev/null; do sleep 0.1; done; sleep 0.5; /usr/bin/open \"\(bundlePath)\""
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", script]
+        try? task.run()
+        NSApplication.shared.terminate(nil)
+    }
+
     @objc private func handleTerminate() {
         accessibilityTimer?.invalidate()
         accessibilityTimer = nil
         stopPermissionWatchdog()
         inputManager.stopCapture()
+        networkManager.stop()
+        shortcutManager.teardown()
         if sleepAssertionID != 0 {
             IOPMAssertionRelease(sleepAssertionID)
             sleepAssertionID = 0
@@ -97,15 +115,7 @@ class AppState: ObservableObject {
             }
             if ax && im {
                 timer.invalidate()
-                // Restart the process so CGEventTap and other AX-dependent
-                // systems initialize with the permission active. macOS does not
-                // always deliver the grant to the already-running process.
-                let url = Bundle.main.bundleURL
-                let task = Process()
-                task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                task.arguments = [url.path]
-                try? task.run()
-                NSApplication.shared.terminate(nil)
+                Task { @MainActor in self.relaunchAfterPermissionGrant() }
             }
         }
     }

@@ -231,6 +231,23 @@ class ShortcutManager: ObservableObject {
         }
     }
 
+    // Called explicitly from AppState.handleTerminate so the CGEventTap mach
+    // port and its run-loop source are released before the process exits.
+    // Without this, the kernel keeps the tap registered against our dying
+    // PID, which is one of the conditions that leaves the process stuck in
+    // the unreapable 'E' state.
+    func teardown() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+        }
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        eventTap = nil
+        runLoopSource = nil
+    }
+
     deinit {
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
