@@ -206,28 +206,24 @@ struct MonitorSectionView: View {
                             automation: monitor.tokenAutomation
                         )
 
-                        HStack {
-                            Button(action: { monitor.discoverDevices() }) {
-                                HStack(spacing: 4) {
-                                    if monitor.isQuerying {
-                                        ProgressView().scaleEffect(0.6)
-                                    } else {
-                                        Image(systemName: "magnifyingglass")
-                                    }
-                                    Text("Detect Monitors")
-                                }
-                            }
-                            .disabled(monitor.isQuerying || monitor.config.personalAccessToken.isEmpty)
-                            .font(.caption)
-
-                            Spacer()
-                        }
-
                         if !monitor.detectedDevices.isEmpty {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Monitor Device")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                HStack {
+                                    Text("Monitor Device")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Button(action: { monitor.discoverDevices() }) {
+                                        if monitor.isQuerying {
+                                            ProgressView().scaleEffect(0.5)
+                                        } else {
+                                            Image(systemName: "arrow.clockwise")
+                                                .font(.caption2)
+                                        }
+                                    }
+                                    .disabled(monitor.isQuerying)
+                                    .help("Re-scan SmartThings for monitor devices")
+                                }
                                 Picker("", selection: Binding(
                                     get: { monitor.config.deviceId },
                                     set: {
@@ -244,9 +240,22 @@ struct MonitorSectionView: View {
                             }
                         } else {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Device ID (manual)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
+                                HStack {
+                                    Text("Device ID (manual)")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Button(action: { monitor.discoverDevices() }) {
+                                        if monitor.isQuerying {
+                                            ProgressView().scaleEffect(0.5)
+                                        } else {
+                                            Image(systemName: "arrow.clockwise")
+                                                .font(.caption2)
+                                        }
+                                    }
+                                    .disabled(monitor.isQuerying || monitor.config.personalAccessToken.isEmpty)
+                                    .help("Scan SmartThings for monitor devices")
+                                }
                                 TextField("SmartThings Device ID", text: Binding(
                                     get: { monitor.config.deviceId },
                                     set: { monitor.config.deviceId = $0 }
@@ -256,14 +265,7 @@ struct MonitorSectionView: View {
                             }
                         }
 
-                        HStack {
-                            Text("My Input:")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text(monitor.config.myInputSource.isEmpty ? "—" : monitor.config.myInputSource)
-                                .font(.caption2)
-                                .fontWeight(.medium)
-                        }
+                        MyInputPickerView(monitor: monitor)
 
                         HStack {
                             Text("Peer's Input:")
@@ -288,16 +290,7 @@ struct MonitorSectionView: View {
                                 .foregroundColor(.secondary)
                         }
 
-                        HStack {
-                            Text("My Input:")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text(monitor.config.myInputSource.isEmpty ? "Detecting…" : monitor.config.myInputSource)
-                                .font(.caption2)
-                                .fontWeight(.medium)
-                                .foregroundColor(monitor.config.myInputSource.isEmpty ? .gray : .primary)
-                                .italic(monitor.config.myInputSource.isEmpty)
-                        }
+                        MyInputPickerView(monitor: monitor)
                     }
                 }
 
@@ -308,6 +301,55 @@ struct MonitorSectionView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+    }
+}
+
+// MARK: - My Input picker
+
+// Manual picker for this Mac's HDMI port + a "Detect current" helper that
+// reads the monitor's currently active input via SmartThings. Each Mac has
+// to set this itself — there's no way to auto-detect "which HDMI is my
+// cable in" from macOS, and we deliberately do NOT sync myInputSource
+// between Macs (the bug it caused was both Macs showing the same value).
+struct MyInputPickerView: View {
+    @ObservedObject var monitor: MonitorManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("This Mac's Input")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button(action: { monitor.detectCurrentInputSource() }) {
+                    HStack(spacing: 3) {
+                        if monitor.isQuerying {
+                            ProgressView().scaleEffect(0.5)
+                        } else {
+                            Image(systemName: "viewfinder")
+                        }
+                        Text("Detect")
+                    }
+                    .font(.caption2)
+                }
+                .disabled(monitor.isQuerying
+                          || monitor.config.personalAccessToken.isEmpty
+                          || monitor.config.deviceId.isEmpty)
+                .help("Reads the monitor's current input. Click only while this Mac is the one shown on the monitor.")
+            }
+            Picker("", selection: Binding(
+                get: { monitor.config.myInputSource.isEmpty
+                       ? (monitor.availableInputSources.first ?? "HDMI1")
+                       : monitor.config.myInputSource },
+                set: { monitor.config.myInputSource = $0 }
+            )) {
+                ForEach(monitor.availableInputSources, id: \.self) { src in
+                    Text(src).tag(src)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(MenuPickerStyle())
         }
     }
 }

@@ -176,10 +176,34 @@ class MonitorManager: ObservableObject {
         _ = tokenAutomation
 
         if config.enabled && config.monitorMode == .smartThings
-            && !config.personalAccessToken.isEmpty && !config.deviceId.isEmpty {
-            fetchSupportedInputSources()
+            && !config.personalAccessToken.isEmpty {
+            // If we have a token but no device picked, discover automatically.
+            // Removes the need for an explicit "Detect Monitors" button.
+            if config.deviceId.isEmpty {
+                discoverDevices()
+            } else {
+                fetchSupportedInputSources()
+            }
         }
+
+        // React to token changes (e.g. first time the user enables auto-refresh,
+        // or the periodic refresh issued a new one). If we don't have a device
+        // yet, kick off discovery now that auth works.
+        $config
+            .map { ($0.personalAccessToken, $0.deviceId, $0.monitorMode, $0.enabled) }
+            .removeDuplicates(by: { $0 == $1 })
+            .dropFirst()
+            .sink { [weak self] token, deviceId, mode, enabled in
+                guard let self else { return }
+                guard enabled, mode == .smartThings, !token.isEmpty else { return }
+                if deviceId.isEmpty {
+                    self.discoverDevices()
+                }
+            }
+            .store(in: &tokenChangeCancellables)
     }
+
+    private var tokenChangeCancellables = Set<AnyCancellable>()
 
     // MARK: - Toggle entry points
 
@@ -360,6 +384,12 @@ class MonitorManager: ObservableObject {
                     self.detectedDevices = monitors
                     if monitors.isEmpty {
                         self.lastError = "No monitor devices found. Make sure your Samsung M7/M8 is added to SmartThings and connected to Wi-Fi."
+                    } else if self.config.deviceId.isEmpty, let only = monitors.first, monitors.count == 1 {
+                        // Exactly one monitor — auto-select it and pull its
+                        // supported input list right away. Common case for
+                        // users with a single Samsung display.
+                        self.config.deviceId = only.id
+                        self.fetchSupportedInputSources()
                     }
                 }
             } catch {
@@ -368,6 +398,12 @@ class MonitorManager: ObservableObject {
         }
     }
 
+    // Reads the supported input list (HDMI1, HDMI2, USB-C, …) from the
+    // monitor. Does NOT touch `myInputSource` — see detectCurrentInputSource()
+    // for that. The earlier version overwrote myInputSource with the monitor's
+    // *currently active* input, which on the slave Mac is the master's input
+    // because the master is the one in focus when the slave first syncs.
+    // Result: both Macs ended up labelled with the same HDMI port.
     func fetchSupportedInputSources() {
         guard !config.personalAccessToken.isEmpty, !config.deviceId.isEmpty else { return }
         isQuerying = true
@@ -386,12 +422,10 @@ class MonitorManager: ObservableObject {
                     let (data, resp) = try await session.data(for: req)
                     guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { continue }
 
-                    if let status = parseInputSourceStatus(from: data) {
+                    if let status = parseInputSourceStatus(from: data),
+                       !status.supported.isEmpty {
                         await MainActor.run {
                             self.availableInputSources = status.supported
-                            if let current = status.current, !current.isEmpty {
-                                self.config.myInputSource = current
-                            }
                         }
                         return
                     }
@@ -401,6 +435,57 @@ class MonitorManager: ObservableObject {
                 }
             } catch {
                 await MainActor.run { self.lastError = "Fetch sources failed: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    // Reads the monitor's *currently active* input source and assigns it to
+    // myInputSource. Caller is responsible for invoking this only when this
+    // Mac is actually in focus on the monitor — otherwise we'd label
+    // ourselves with the peer's HDMI port. Wired up to the "Detect current"
+    // button in the UI, which the user clicks while their Mac is the one
+    // visible on the monitor.
+    func detectCurrentInputSource() {
+        guard !config.personalAccessToken.isEmpty, !config.deviceId.isEmpty else {
+            lastError = "Connect SmartThings first (token + device)."
+            return
+        }
+        isQuerying = true
+        lastError = nil
+
+        Task {
+            defer { Task { @MainActor in self.isQuerying = false } }
+            do {
+                let capabilities = ["samsungvd.mediaInputSource", "mediaInputSource"]
+                for cap in capabilities {
+                    let urlStr = "\(Self.baseURL)/devices/\(config.deviceId)/components/main/capabilities/\(cap)/status"
+                    guard let url = URL(string: urlStr) else { continue }
+                    var req = URLRequest(url: url)
+                    req.setValue("Bearer \(config.personalAccessToken)", forHTTPHeaderField: "Authorization")
+
+                    let (data, resp) = try await session.data(for: req)
+                    guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { continue }
+
+                    if let status = parseInputSourceStatus(from: data),
+                       let current = status.current, !current.isEmpty {
+                        await MainActor.run {
+                            self.config.myInputSource = current
+                            // Only refresh the supported list if this capability
+                            // actually returned one — mediaInputSource often
+                            // returns an empty array, which would otherwise
+                            // wipe out a good list we already have.
+                            if !status.supported.isEmpty {
+                                self.availableInputSources = status.supported
+                            }
+                        }
+                        return
+                    }
+                }
+                await MainActor.run {
+                    self.lastError = "Could not read current input. Make sure the monitor is showing this Mac."
+                }
+            } catch {
+                await MainActor.run { self.lastError = "Detect failed: \(error.localizedDescription)" }
             }
         }
     }
@@ -449,17 +534,56 @@ class MonitorManager: ObservableObject {
         let supported: [String]
     }
 
+    // Parses the SmartThings capability status payload. Real-world shapes
+    // we've seen on a Samsung M-series monitor:
+    //
+    //   samsungvd.mediaInputSource: {
+    //     "inputSource": { "value": "HDMI2", "timestamp": ... },
+    //     "supportedInputSourcesMap": {
+    //       "value": [{"id": "HDMI1", "name": "..."}, {"id": "HDMI2", "name": "..."}]
+    //     }
+    //   }
+    //
+    //   mediaInputSource: {
+    //     "inputSource": { "value": null },
+    //     "supportedInputSources": { "value": [] }      // often empty
+    //   }
+    //
+    // We treat ANY presence of a non-empty inputSource.value as success even
+    // if the supported-list lookup fails — the earlier version returned nil
+    // unless both current AND a [String] supported list were present, which
+    // is why Detect always failed.
     private func parseInputSourceStatus(from data: Data) -> InputSourceStatus? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        let key = root["inputSource"] as? [String: Any]
-        let current = key?["value"] as? String
-        if let supported = key?["supportedValues"] as? [String], !supported.isEmpty {
-            return InputSourceStatus(current: current, supported: supported)
+
+        let inputSource = root["inputSource"] as? [String: Any]
+        let current = inputSource?["value"] as? String
+
+        // Try, in order: supportedInputSourcesMap[].id, supportedValues,
+        // supportedInputSources.value (newer shape), supportedInputSources
+        // (older flat shape).
+        var supported: [String] = []
+
+        if let map = root["supportedInputSourcesMap"] as? [String: Any],
+           let arr = map["value"] as? [[String: Any]] {
+            supported = arr.compactMap { $0["id"] as? String }
         }
-        if let supported = key?["supportedInputSources"] as? [String], !supported.isEmpty {
-            return InputSourceStatus(current: current, supported: supported)
+        if supported.isEmpty, let arr = inputSource?["supportedValues"] as? [String] {
+            supported = arr
         }
-        return nil
+        if supported.isEmpty, let wrapped = root["supportedInputSources"] as? [String: Any],
+           let arr = wrapped["value"] as? [String] {
+            supported = arr
+        }
+        if supported.isEmpty, let arr = inputSource?["supportedInputSources"] as? [String] {
+            supported = arr
+        }
+
+        // Nil only if we got literally nothing useful — neither current nor
+        // a supported list. Callers can still use the result if only `current`
+        // is present.
+        if current == nil && supported.isEmpty { return nil }
+        return InputSourceStatus(current: current, supported: supported)
     }
 
     // MARK: - Persistence
