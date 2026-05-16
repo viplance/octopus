@@ -199,17 +199,10 @@ struct MonitorSectionView: View {
 
                 // ── SmartThings fields (only in SmartThings mode) ──────────
                 if monitor.config.monitorMode == .smartThings {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("SmartThings Token")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        SecureField("Personal Access Token", text: Binding(
-                            get: { monitor.config.personalAccessToken },
-                            set: { monitor.config.personalAccessToken = $0 }
-                        ))
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .font(.caption2)
-                    }
+                    SmartThingsTokenView(
+                        monitor: monitor,
+                        automation: monitor.tokenAutomation
+                    )
 
                     HStack {
                         Button(action: { monitor.discoverDevices() }) {
@@ -341,5 +334,106 @@ struct ShortcutSectionView: View {
                 .foregroundColor(.gray)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+// MARK: - SmartThings Token (manual PAT + Safari auto-refresh)
+
+struct SmartThingsTokenView: View {
+    @ObservedObject var monitor: MonitorManager
+    @ObservedObject var automation: SmartThingsTokenAutomation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Auto refresh token", isOn: Binding(
+                get: { monitor.config.autoRefreshTokenEnabled },
+                set: { monitor.config.autoRefreshTokenEnabled = $0 }
+            ))
+            .toggleStyle(SwitchToggleStyle(tint: .orange))
+            .font(.caption2)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("SmartThings Token")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                SecureField("Personal Access Token", text: Binding(
+                    get: { monitor.config.personalAccessToken },
+                    set: { monitor.config.personalAccessToken = $0 }
+                ))
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+                .font(.caption2)
+                .disabled(monitor.config.autoRefreshTokenEnabled)
+            }
+
+            if monitor.config.autoRefreshTokenEnabled {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Google Account (for SSO)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    TextField("optional — leave empty for first listed", text: Binding(
+                        get: { monitor.config.googleAccountEmail },
+                        set: { monitor.config.googleAccountEmail = $0 }
+                    ))
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .font(.caption2)
+                }
+
+                HStack {
+                    Button(action: { Task { await automation.refreshNow() } }) {
+                        HStack(spacing: 4) {
+                            if automation.isRunning { ProgressView().scaleEffect(0.6) }
+                            Text(automation.isRunning ? "Refreshing…" : "Refresh now")
+                        }
+                    }
+                    .disabled(automation.isRunning)
+                    .font(.caption)
+                    Spacer()
+                }
+                statusLine
+                Text("Opens Safari at account.smartthings.com/tokens and generates a fresh 24h token. If logged out, signs you in via Google SSO. You must be logged in to Google in Safari.")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statusLine: some View {
+        if automation.isRunning && !automation.lastStep.isEmpty {
+            HStack(spacing: 4) {
+                ProgressView().scaleEffect(0.5)
+                Text("Step: \(automation.lastStep)…")
+            }
+            .font(.caption2)
+            .foregroundColor(.gray)
+        } else if let err = automation.lastError {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(err).font(.caption2).foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !automation.lastStep.isEmpty {
+                    Text("Stuck at: \(automation.lastStep)")
+                        .font(.caption2).foregroundColor(.orange)
+                }
+            }
+        } else if let issued = monitor.config.tokenIssuedAt {
+            let expiry = issued.addingTimeInterval(SmartThingsTokenAutomation.tokenLifetime)
+            HStack(spacing: 4) {
+                Circle().fill(Color.green).frame(width: 6, height: 6)
+                Text(expiryDescription(expiry))
+            }
+            .font(.caption2)
+            .foregroundColor(.gray)
+        }
+    }
+
+    private func expiryDescription(_ date: Date) -> String {
+        let seconds = date.timeIntervalSinceNow
+        if seconds <= 0 { return "Token expired — refreshing soon" }
+        let hours = Int(seconds / 3600)
+        let minutes = Int(seconds.truncatingRemainder(dividingBy: 3600) / 60)
+        return hours > 0
+            ? "Token expires in \(hours)h \(minutes)m"
+            : "Token expires in \(minutes)m"
     }
 }

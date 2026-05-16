@@ -1,0 +1,1 @@
+../../SmartThingsTokenAutomation.swift

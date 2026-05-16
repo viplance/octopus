@@ -10,6 +10,7 @@ import CoreGraphics
 //
 // .smartThings — sends an explicit setInputSource command via the SmartThings REST
 //                API. Use when the monitor does not auto-switch (e.g. Samsung M7/M8).
+@MainActor
 class MonitorManager: ObservableObject {
 
     // MARK: - Mode
@@ -36,6 +37,45 @@ class MonitorManager: ObservableObject {
         var deviceId: String
         // The input source this Mac should activate when it gains focus (SmartThings mode).
         var myInputSource: String
+        // Auto-refresh via Safari automation against account.smartthings.com/tokens.
+        // tokenIssuedAt lets us schedule the next refresh ~2h before the 24h expiry.
+        var autoRefreshTokenEnabled: Bool = false
+        var tokenIssuedAt: Date? = nil
+        // Optional: which Google account to pick on the SSO chooser. Empty =
+        // pick whatever account Google lists first.
+        var googleAccountEmail: String = ""
+
+        enum CodingKeys: String, CodingKey {
+            case enabled, monitorMode, personalAccessToken, deviceId, myInputSource
+            case autoRefreshTokenEnabled, tokenIssuedAt, googleAccountEmail
+        }
+
+        init(enabled: Bool, monitorMode: MonitorMode, personalAccessToken: String,
+             deviceId: String, myInputSource: String,
+             autoRefreshTokenEnabled: Bool = false, tokenIssuedAt: Date? = nil,
+             googleAccountEmail: String = "") {
+            self.enabled = enabled
+            self.monitorMode = monitorMode
+            self.personalAccessToken = personalAccessToken
+            self.deviceId = deviceId
+            self.myInputSource = myInputSource
+            self.autoRefreshTokenEnabled = autoRefreshTokenEnabled
+            self.tokenIssuedAt = tokenIssuedAt
+            self.googleAccountEmail = googleAccountEmail
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            enabled                 = try c.decode(Bool.self,        forKey: .enabled)
+            monitorMode             = try c.decode(MonitorMode.self, forKey: .monitorMode)
+            personalAccessToken     = try c.decode(String.self,      forKey: .personalAccessToken)
+            deviceId                = try c.decode(String.self,      forKey: .deviceId)
+            myInputSource           = try c.decode(String.self,      forKey: .myInputSource)
+            // New fields default for existing configs (no migration needed).
+            autoRefreshTokenEnabled = try c.decodeIfPresent(Bool.self,   forKey: .autoRefreshTokenEnabled) ?? false
+            tokenIssuedAt           = try c.decodeIfPresent(Date.self,   forKey: .tokenIssuedAt)
+            googleAccountEmail      = try c.decodeIfPresent(String.self, forKey: .googleAccountEmail) ?? ""
+        }
     }
 
     @Published var config: Config {
@@ -46,6 +86,10 @@ class MonitorManager: ObservableObject {
     @Published var isQuerying = false
     @Published var lastError: String?
     @Published var detectedDevices: [SmartThingsDevice] = []
+
+    // Lazy because SmartThingsTokenAutomation captures `self`; we can't init
+    // it as a stored property without referencing `self` before init completes.
+    lazy var tokenAutomation: SmartThingsTokenAutomation = SmartThingsTokenAutomation(monitor: self)
 
     struct SmartThingsDevice: Identifiable, Codable {
         let id: String
@@ -74,6 +118,10 @@ class MonitorManager: ObservableObject {
             deviceId: "",
             myInputSource: "HDMI1"
         )
+        // Force-instantiate the token automation so its scheduler binding to
+        // $config fires (it watches autoRefreshTokenEnabled). Without this,
+        // the lazy stays dormant until UI first reads it.
+        _ = tokenAutomation
     }
 
     // MARK: - Toggle entry points

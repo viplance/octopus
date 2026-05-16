@@ -58,6 +58,8 @@ function buildInfoPlist() {
   <string>OctopusSync needs to monitor keyboard and mouse input to forward it to the peer Mac and to detect the toggle shortcut.</string>
   <key>NSAccessibilityUsageDescription</key>
   <string>OctopusSync needs Accessibility access to capture and inject keyboard and mouse events.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>OctopusSync uses Safari to automatically refresh your SmartThings access token.</string>
 </dict>
 </plist>
 `;
@@ -144,20 +146,46 @@ const SELF_SIGNED_NAME = "OctopusSync-codesign";
 const KEYCHAIN = `${process.env.HOME}/Library/Keychains/login.keychain-db`;
 
 function findCertInKeychain(pattern) {
+  return findAllCertsInKeychain(pattern)[0] ?? null;
+}
+
+function findAllCertsInKeychain(pattern) {
   try {
     const output = execSync("security find-identity -v -p codesigning", { stdio: "pipe" }).toString();
-    const matches = [...output.matchAll(new RegExp(`"(${pattern}[^"]*)"`, "g"))].map(m => m[1]);
-    return matches[0] ?? null;
+    return [...output.matchAll(new RegExp(`"(${pattern}[^"]*)"`, "g"))].map(m => m[1]);
   } catch {
-    return null;
+    return [];
   }
 }
 
+// Path to entitlements file maintained alongside the Xcode project. The
+// file declares com.apple.security.automation.apple-events, which macOS
+// requires (in addition to the user's Automation grant) before letting a
+// sandboxed app drive Safari via AppleScript. Without --entitlements,
+// codesign drops the entry and Safari requests fail with -1743 even if
+// the user clicked Allow in the system prompt.
+const ENTITLEMENTS_PATH = join(root, "OctopusSync.entitlements");
+
 function trySign(certName) {
+  // --options=runtime enables Hardened Runtime, which macOS requires (along
+  // with the sandbox entitlement) before granting Apple Events permission
+  // to a sandboxed app. Without it, NSAppleScript fails with -600 (Safari
+  // got an error: application isn't running) and tccd never even logs the
+  // request — the denial happens entirely inside our process's bridge.
+  const args = ["--force", "--deep", "--options", "runtime", "--sign", certName];
   try {
-    execSync(`codesign --force --deep --sign "${certName}" "${appBundle}"`, { stdio: "pipe" });
+    execSync(`test -f "${ENTITLEMENTS_PATH}"`, { stdio: "pipe" });
+    args.push("--entitlements", ENTITLEMENTS_PATH);
+  } catch { /* no entitlements file — sign without */ }
+  args.push(appBundle);
+  try {
+    execSync(`codesign ${args.map(a => `"${a}"`).join(" ")}`, { stdio: ["ignore", "pipe", "pipe"] });
     return true;
-  } catch {
+  } catch (e) {
+    // Surface codesign's stderr so a cert whose private key isn't available
+    // doesn't silently fall through to the self-signed path.
+    const stderr = e.stderr ? e.stderr.toString().trim() : "";
+    if (stderr) console.warn(`    codesign: ${stderr.split("\n").slice(0, 2).join(" | ")}`);
     return false;
   }
 }
@@ -202,11 +230,19 @@ function createSelfSignedCert() {
 
 let signed = false;
 
-// 1. Try Apple Development cert
-const appleDevCert = findCertInKeychain("Apple Development:");
-if (appleDevCert && trySign(appleDevCert)) {
-  console.log(`Signed with: ${appleDevCert}`);
-  signed = true;
+// 1. Try every Apple Development cert in the keychain. The list may contain
+// certs whose private key isn't accessible (e.g. a colleague's cert imported
+// for verification) — those will fail to sign and we fall through. Crucially,
+// Automation (Apple Events) is silently denied for self-signed bundles on
+// macOS 14+, so an Apple-signed identity is the only path that actually
+// makes Safari scripting work.
+for (const cert of findAllCertsInKeychain("Apple Development:")) {
+  if (trySign(cert)) {
+    console.log(`Signed with: ${cert}`);
+    signed = true;
+    break;
+  }
+  console.warn(`  Cert not usable for signing (private key inaccessible?): ${cert}`);
 }
 
 // 2. Try or create self-signed cert
@@ -231,7 +267,13 @@ if (!signed) {
 if (!signed) {
   console.warn("No usable certificate found — falling back to ad-hoc signature.");
   console.warn("Accessibility/Input Monitoring permissions must be re-granted after each rebuild.");
-  await run("codesign", ["--force", "--deep", "--sign", "-", appBundle]);
+  const adhocArgs = ["--force", "--deep", "--options", "runtime", "--sign", "-"];
+  try {
+    execSync(`test -f "${ENTITLEMENTS_PATH}"`, { stdio: "pipe" });
+    adhocArgs.push("--entitlements", ENTITLEMENTS_PATH);
+  } catch { /* no entitlements file */ }
+  adhocArgs.push(appBundle);
+  await run("codesign", adhocArgs);
 }
 
 console.log(`Done. App bundle: ${appBundle}`);

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- App Sandbox is disabled. With sandbox on, NSAppleScript fails with
+         -600 when targeting Safari (or any non-Mac-App-Store-distributed app),
+         even with com.apple.security.automation.apple-events. Apple's
+         Automation entitlement only works under sandbox for Mac App Store
+         builds; for self-distributed apps the sandbox must be off. We keep
+         Hardened Runtime + Developer ID-class signing for everything else. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>
