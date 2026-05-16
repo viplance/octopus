@@ -199,89 +199,105 @@ struct MonitorSectionView: View {
 
                 // ── SmartThings fields (only in SmartThings mode) ──────────
                 if monitor.config.monitorMode == .smartThings {
-                    SmartThingsTokenView(
-                        monitor: monitor,
-                        automation: monitor.tokenAutomation
-                    )
+                    if monitor.config.isMasterForSmartThings {
+                        // Master: full configuration, owns all SmartThings requests
+                        SmartThingsTokenView(
+                            monitor: monitor,
+                            automation: monitor.tokenAutomation
+                        )
 
-                    HStack {
-                        Button(action: { monitor.discoverDevices() }) {
-                            HStack(spacing: 4) {
-                                if monitor.isQuerying {
-                                    ProgressView().scaleEffect(0.6)
-                                } else {
-                                    Image(systemName: "magnifyingglass")
+                        HStack {
+                            Button(action: { monitor.discoverDevices() }) {
+                                HStack(spacing: 4) {
+                                    if monitor.isQuerying {
+                                        ProgressView().scaleEffect(0.6)
+                                    } else {
+                                        Image(systemName: "magnifyingglass")
+                                    }
+                                    Text("Detect Monitors")
                                 }
-                                Text("Detect Monitors")
+                            }
+                            .disabled(monitor.isQuerying || monitor.config.personalAccessToken.isEmpty)
+                            .font(.caption)
+
+                            Spacer()
+                        }
+
+                        if !monitor.detectedDevices.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Monitor Device")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Picker("", selection: Binding(
+                                    get: { monitor.config.deviceId },
+                                    set: {
+                                        monitor.config.deviceId = $0
+                                        monitor.fetchSupportedInputSources()
+                                    }
+                                )) {
+                                    ForEach(monitor.detectedDevices) { device in
+                                        Text(device.label).tag(device.id)
+                                    }
+                                }
+                                .labelsHidden()
+                                .pickerStyle(MenuPickerStyle())
+                            }
+                        } else {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Device ID (manual)")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                TextField("SmartThings Device ID", text: Binding(
+                                    get: { monitor.config.deviceId },
+                                    set: { monitor.config.deviceId = $0 }
+                                ))
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .font(.caption2)
                             }
                         }
-                        .disabled(monitor.isQuerying || monitor.config.personalAccessToken.isEmpty)
-                        .font(.caption)
 
-                        Spacer()
-                    }
-
-                    if !monitor.detectedDevices.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Monitor Device")
+                        HStack {
+                            Text("My Input:")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
-                            Picker("", selection: Binding(
-                                get: { monitor.config.deviceId },
-                                set: {
-                                    monitor.config.deviceId = $0
-                                    monitor.fetchSupportedInputSources()
-                                }
-                            )) {
-                                ForEach(monitor.detectedDevices) { device in
-                                    Text(device.label).tag(device.id)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(MenuPickerStyle())
+                            Text(monitor.config.myInputSource.isEmpty ? "—" : monitor.config.myInputSource)
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                        }
+
+                        HStack {
+                            Text("Peer's Input:")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Text(monitor.config.peerInputSource.isEmpty
+                                 ? "Waiting for peer…"
+                                 : monitor.config.peerInputSource)
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundColor(monitor.config.peerInputSource.isEmpty ? .gray : .primary)
+                                .italic(monitor.config.peerInputSource.isEmpty)
                         }
                     } else {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Device ID (manual)")
+                        // Slave: SmartThings managed by master, no local config needed
+                        HStack(spacing: 6) {
+                            Image(systemName: "link")
+                                .font(.caption2)
+                                .foregroundColor(.blue)
+                            Text("SmartThings managed by master Mac")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
-                            TextField("SmartThings Device ID", text: Binding(
-                                get: { monitor.config.deviceId },
-                                set: { monitor.config.deviceId = $0 }
-                            ))
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .font(.caption2)
                         }
-                    }
 
-                    VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text("This Mac's Input")
+                            Text("My Input:")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
-                            Spacer()
-                            Button(action: { monitor.fetchSupportedInputSources() }) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.caption2)
-                            }
-                            .disabled(monitor.isQuerying || monitor.config.deviceId.isEmpty)
-                            .help("Refresh supported input sources from monitor")
+                            Text(monitor.config.myInputSource.isEmpty ? "Detecting…" : monitor.config.myInputSource)
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundColor(monitor.config.myInputSource.isEmpty ? .gray : .primary)
+                                .italic(monitor.config.myInputSource.isEmpty)
                         }
-                        Picker("", selection: Binding(
-                            get: { monitor.config.myInputSource },
-                            set: { monitor.config.myInputSource = $0 }
-                        )) {
-                            ForEach(monitor.availableInputSources, id: \.self) { source in
-                                Text(source).tag(source)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(MenuPickerStyle())
-
-                        Text("Monitor switches to this input when you gain focus.")
-                            .font(.caption2)
-                            .foregroundColor(.gray)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 

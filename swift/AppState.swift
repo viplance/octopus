@@ -134,12 +134,16 @@ class AppState: ObservableObject {
             .store(in: &cancellables)
 
         // When connection drops while sharing is active, return control and alert.
+        // When connected, immediately push the SmartThings config to the peer.
         networkManager.$connectionStatus
             .receive(on: RunLoop.main)
             .sink { [weak self] status in
                 guard let self = self else { return }
                 if status == .disconnected && self.isSharingActive {
                     self.restoreLocalControl()
+                }
+                if status == .connected {
+                    self.sendMonitorSync(config: self.monitorManager.config)
                 }
             }
             .store(in: &cancellables)
@@ -189,12 +193,23 @@ class AppState: ObservableObject {
                 return
             }
 
-            if let ctrl = event.control, ctrl.hasPrefix("monitorSync:") {
-                let isEnabled = String(ctrl.dropFirst("monitorSync:".count)) == "true"
-                Task { @MainActor in
-                    if self.monitorManager.config.enabled != isEnabled {
-                        self.monitorManager.config.enabled = isEnabled
+            // Full SmartThings config pushed from the master Mac.
+            if let ctrl = event.control, ctrl.hasPrefix("monitorConfigSync:") {
+                let json = String(ctrl.dropFirst("monitorConfigSync:".count))
+                if let data = json.data(using: .utf8),
+                   let shared = try? JSONDecoder().decode(MonitorManager.SharedConfig.self, from: data) {
+                    Task { @MainActor in
+                        self.monitorManager.applySharedConfig(shared)
                     }
+                }
+                return
+            }
+
+            // Slave reporting its auto-detected input back to the master.
+            if let ctrl = event.control, ctrl.hasPrefix("inputSourceSync:") {
+                let source = String(ctrl.dropFirst("inputSourceSync:".count))
+                Task { @MainActor in
+                    self.monitorManager.setPeerInputSource(source)
                 }
                 return
             }
@@ -243,19 +258,36 @@ class AppState: ObservableObject {
             }
 
         monitorSyncCancellable = monitorManager.$config
-            .map(\.enabled)
             .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] isEnabled in
-                guard let self, self.connectionStatus == .connected else { return }
-                let syncEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil,
-                                           keyCode: nil, isDown: nil, flags: nil, rawData: nil,
-                                           control: "monitorSync:\(isEnabled)")
-                self.networkManager.sendEvent(syncEvent)
+            .sink { [weak self] config in
+                guard let self,
+                      !self.monitorManager.isSyncApply,
+                      self.connectionStatus == .connected
+                else { return }
+                self.sendMonitorSync(config: config)
             }
     }
 
     private var lastReceiveTime: TimeInterval = 0
+
+    // Master pushes its full SmartThings config to the slave.
+    // Slave reports only its detected input source back to the master.
+    private func sendMonitorSync(config: MonitorManager.Config) {
+        if config.isMasterForSmartThings && !config.personalAccessToken.isEmpty {
+            guard let json = try? JSONEncoder().encode(monitorManager.sharedConfig),
+                  let str = String(data: json, encoding: .utf8)
+            else { return }
+            let event = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil,
+                                   keyCode: nil, isDown: nil, flags: nil, rawData: nil,
+                                   control: "monitorConfigSync:\(str)")
+            networkManager.sendEvent(event)
+        } else if !config.isMasterForSmartThings && !config.myInputSource.isEmpty {
+            let event = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil,
+                                   keyCode: nil, isDown: nil, flags: nil, rawData: nil,
+                                   control: "inputSourceSync:\(config.myInputSource)")
+            networkManager.sendEvent(event)
+        }
+    }
 
     // Single recovery path used when sharing must end against the user's
     // wishes — connection lost, tap killed, permission revoked. Stops the
