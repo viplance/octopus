@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import AppKit
+import QuartzCore
 
 class InputManager {
     var onEventCaptured: ((InputEvent) -> Void)?
@@ -18,6 +19,11 @@ class InputManager {
     private var tapRunLoop: CFRunLoop?
     private var savedCursorPosition: CGPoint?
     private let processingQueue = DispatchQueue(label: "com.octopus.input-processing", qos: .userInteractive)
+
+    private var batchDx: Double = 0
+    private var batchDy: Double = 0
+    private var batchTimer: CFRunLoopTimer?
+    private static let batchInterval: CFTimeInterval = 0.008
 
     deinit {
         stopCapture()
@@ -102,10 +108,29 @@ class InputManager {
                 }
             }
 
-            if type == .mouseMoved || type == .leftMouseDragged || type == .rightMouseDragged {
+            switch type {
+            case .mouseMoved, .leftMouseDragged, .rightMouseDragged:
                 if let pos = manager.savedCursorPosition {
                     CGWarpMouseCursorPosition(pos)
                 }
+                let dx = event.getDoubleValueField(.mouseEventDeltaX)
+                let dy = event.getDoubleValueField(.mouseEventDeltaY)
+                manager.accumulateMouseMove(dx: dx, dy: dy)
+                return nil
+            case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp:
+                if let pos = manager.savedCursorPosition {
+                    CGWarpMouseCursorPosition(pos)
+                }
+                manager.flushMouseBatch()
+                let dx = event.getDoubleValueField(.mouseEventDeltaX)
+                let dy = event.getDoubleValueField(.mouseEventDeltaY)
+                let button: Int = (type == .rightMouseDown || type == .rightMouseUp) ? 1 : 0
+                let isDown = (type == .leftMouseDown || type == .rightMouseDown)
+                let clickEvent = InputEvent(type: .mouseClick, dx: dx, dy: dy, button: button, keyCode: nil, isDown: isDown, flags: nil, rawData: nil, control: nil)
+                manager.onEventCaptured?(clickEvent)
+                return nil
+            default:
+                break
             }
 
             let retainedEvent = Unmanaged.passRetained(event)
@@ -158,6 +183,10 @@ class InputManager {
     }
 
     func stopCapture() {
+        flushMouseBatch()
+        if let pos = savedCursorPosition {
+            CGWarpMouseCursorPosition(pos)
+        }
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             CFMachPortInvalidate(tap)
@@ -174,9 +203,35 @@ class InputManager {
         tapThread = nil
     }
     
+    func accumulateMouseMove(dx: Double, dy: Double) {
+        batchDx += dx
+        batchDy += dy
+        if batchTimer == nil, let loop = tapRunLoop {
+            let timer = CFRunLoopTimerCreateWithHandler(kCFAllocatorDefault, CFAbsoluteTimeGetCurrent() + Self.batchInterval, 0, 0, 0) { [weak self] _ in
+                self?.flushMouseBatch()
+            }
+            batchTimer = timer
+            CFRunLoopAddTimer(loop, timer, .commonModes)
+        }
+    }
+
+    func flushMouseBatch() {
+        if let timer = batchTimer {
+            CFRunLoopTimerInvalidate(timer)
+            batchTimer = nil
+        }
+        let dx = batchDx
+        let dy = batchDy
+        batchDx = 0
+        batchDy = 0
+        guard dx != 0 || dy != 0 else { return }
+        let moveEvent = InputEvent(type: .mouseMove, dx: dx, dy: dy, button: nil, keyCode: nil, isDown: nil, flags: nil, rawData: nil, control: nil)
+        onEventCaptured?(moveEvent)
+    }
+
     private func handleCapturedEvent(event: CGEvent, type: CGEventType) {
         var inputEvent: InputEvent?
-        
+
         switch type {
         case .keyDown:
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
@@ -186,21 +241,92 @@ class InputManager {
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags.rawValue
             inputEvent = InputEvent(type: .keyUp, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: false, flags: flags, rawData: nil, control: nil)
+        case .mouseMoved, .leftMouseDragged, .rightMouseDragged:
+            let dx = event.getDoubleValueField(.mouseEventDeltaX)
+            let dy = event.getDoubleValueField(.mouseEventDeltaY)
+            inputEvent = InputEvent(type: .mouseMove, dx: dx, dy: dy, button: nil, keyCode: nil, isDown: nil, flags: nil, rawData: nil, control: nil)
+        case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp:
+            let dx = event.getDoubleValueField(.mouseEventDeltaX)
+            let dy = event.getDoubleValueField(.mouseEventDeltaY)
+            let button: Int = (type == .rightMouseDown || type == .rightMouseUp) ? 1 : 0
+            let isDown = (type == .leftMouseDown || type == .rightMouseDown)
+            inputEvent = InputEvent(type: .mouseClick, dx: dx, dy: dy, button: button, keyCode: nil, isDown: isDown, flags: nil, rawData: nil, control: nil)
         default:
-            // For scroll wheels, gestures and NX_SYSDEFINED, simply serialize the event to raw binary data
             if let data = event.data {
                 inputEvent = InputEvent(type: .raw, dx: nil, dy: nil, button: nil, keyCode: nil, isDown: nil, flags: nil, rawData: data as Data, control: nil)
             }
             break
         }
-        
+
         if let inputEvent = inputEvent {
             onEventCaptured?(inputEvent)
         }
     }
     
+    private var cachedDisplayBounds: CGRect = .null
+    private var displayBoundsCacheTime: CFTimeInterval = 0
+
+    private func screenBounds() -> CGRect {
+        let now = CACurrentMediaTime()
+        if now - displayBoundsCacheTime < 5.0 && !cachedDisplayBounds.isNull {
+            return cachedDisplayBounds
+        }
+        var displayCount: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &displayCount)
+        var activeDisplays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        CGGetActiveDisplayList(displayCount, &activeDisplays, &displayCount)
+        var total = CGRect.null
+        for display in activeDisplays {
+            let bounds = CGDisplayBounds(display)
+            total = total.isNull ? bounds : total.union(bounds)
+        }
+        cachedDisplayBounds = total
+        displayBoundsCacheTime = now
+        return total
+    }
+
+    private func clampToScreen(_ point: inout CGPoint) {
+        let bounds = screenBounds()
+        guard !bounds.isNull else { return }
+        point.x = max(bounds.minX, min(point.x, bounds.maxX - 1))
+        point.y = max(bounds.minY, min(point.y, bounds.maxY - 1))
+    }
+
     func injectEvent(_ event: InputEvent) {
         switch event.type {
+        case .mouseMove:
+            let dx = event.dx ?? 0
+            let dy = event.dy ?? 0
+            let currentLocEvent = CGEvent(source: nil)
+            var loc = currentLocEvent?.location ?? .zero
+            loc.x += dx
+            loc.y += dy
+            clampToScreen(&loc)
+            if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: loc, mouseButton: .left) {
+                moveEvent.setDoubleValueField(.mouseEventDeltaX, value: dx)
+                moveEvent.setDoubleValueField(.mouseEventDeltaY, value: dy)
+                moveEvent.post(tap: .cgSessionEventTap)
+            }
+        case .mouseClick:
+            let dx = event.dx ?? 0
+            let dy = event.dy ?? 0
+            let isDown = event.isDown ?? true
+            let isRight = (event.button ?? 0) == 1
+            let currentLocEvent = CGEvent(source: nil)
+            var loc = currentLocEvent?.location ?? .zero
+            loc.x += dx
+            loc.y += dy
+            clampToScreen(&loc)
+            let clickType: CGEventType
+            if isRight {
+                clickType = isDown ? .rightMouseDown : .rightMouseUp
+            } else {
+                clickType = isDown ? .leftMouseDown : .leftMouseUp
+            }
+            let btn: CGMouseButton = isRight ? .right : .left
+            if let clickEvent = CGEvent(mouseEventSource: nil, mouseType: clickType, mouseCursorPosition: loc, mouseButton: btn) {
+                clickEvent.post(tap: .cgSessionEventTap)
+            }
         case .raw:
             if let data = event.rawData as CFData? {
                 if let rawEvent = CGEvent(withDataAllocator: kCFAllocatorDefault, data: data) {
@@ -210,38 +336,18 @@ class InputManager {
 
                     if rawType == .mouseMoved || rawType == .leftMouseDragged || rawType == .rightMouseDragged ||
                        rawType == .leftMouseDown || rawType == .leftMouseUp || rawType == .rightMouseDown || rawType == .rightMouseUp {
-
                         var dx: Double = 0
                         var dy: Double = 0
-
                         if rawType == .mouseMoved || rawType == .leftMouseDragged || rawType == .rightMouseDragged {
                             dx = rawEvent.getDoubleValueField(.mouseEventDeltaX)
                             dy = rawEvent.getDoubleValueField(.mouseEventDeltaY)
                         }
-
                         currentLoc.x += dx
                         currentLoc.y += dy
-
-                        var displayCount: UInt32 = 0
-                        CGGetActiveDisplayList(0, nil, &displayCount)
-                        var activeDisplays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-                        CGGetActiveDisplayList(displayCount, &activeDisplays, &displayCount)
-
-                        var totalBounds = CGRect.null
-                        for display in activeDisplays {
-                            let bounds = CGDisplayBounds(display)
-                            totalBounds = totalBounds.isNull ? bounds : totalBounds.union(bounds)
-                        }
-
-                        if !totalBounds.isNull {
-                            currentLoc.x = max(totalBounds.minX, min(currentLoc.x, totalBounds.maxX - 1))
-                            currentLoc.y = max(totalBounds.minY, min(currentLoc.y, totalBounds.maxY - 1))
-                        }
+                        clampToScreen(&currentLoc)
                     }
 
                     rawEvent.location = currentLoc
-                    // Post at session level so events reach the login window / password fields.
-                    // cghidEventTap alone does not penetrate the loginwindow's security session.
                     rawEvent.post(tap: .cgSessionEventTap)
                 }
             }
@@ -252,8 +358,6 @@ class InputManager {
                 if let flags = event.flags {
                     keyEvent?.flags = CGEventFlags(rawValue: flags)
                 }
-                // Post at session level — reaches loginwindow password field.
-                // Also ensure the keyboard state tracks correctly for modifier keys.
                 keyEvent?.post(tap: .cgSessionEventTap)
             }
         default:

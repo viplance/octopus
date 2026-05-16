@@ -17,7 +17,8 @@ class NetworkManager: ObservableObject {
     private let instanceID = UUID().uuidString
 
     private var recvBuffer = Data()
-    
+    private var pendingSendCount = 0
+
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
 
@@ -250,6 +251,7 @@ class NetworkManager: ObservableObject {
         connection?.cancel()
         connection = nil
         recvBuffer = Data()
+        pendingSendCount = 0
         guard connectionStatus != .disconnected else { return }
         connectionStatus = .disconnected
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -262,8 +264,12 @@ class NetworkManager: ObservableObject {
 
     func sendEvent(_ event: InputEvent) {
         guard let conn = connection, conn.state == .ready else { return }
+        if event.type == .mouseMove && pendingSendCount > 3 { return }
         guard let frame = encodeFrame(event) else { return }
-        conn.send(content: frame, completion: .contentProcessed({ _ in }))
+        pendingSendCount += 1
+        conn.send(content: frame, completion: .contentProcessed({ [weak self] _ in
+            self?.pendingSendCount -= 1
+        }))
     }
 
     private func encodeFrame(_ event: InputEvent) -> Data? {

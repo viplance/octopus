@@ -38,24 +38,32 @@ function warnIfRouted(remoteHost, localAddr) {
 class FrameParser {
   constructor(onMessage) {
     this._onMessage = onMessage;
-    this._buf = Buffer.alloc(0);
+    this._buf = Buffer.allocUnsafe(65536);
+    this._len = 0;
   }
 
   push(chunk) {
-    this._buf = Buffer.concat([this._buf, chunk]);
-    while (true) {
-      if (this._buf.length < 4) break;
+    if (this._len + chunk.length > this._buf.length) {
+      const newBuf = Buffer.allocUnsafe(Math.max(this._buf.length * 2, this._len + chunk.length));
+      this._buf.copy(newBuf, 0, 0, this._len);
+      this._buf = newBuf;
+    }
+    chunk.copy(this._buf, this._len);
+    this._len += chunk.length;
+
+    while (this._len >= 4) {
       const len = this._buf.readUInt32BE(0);
-      if (this._buf.length < 4 + len) break;
-      const payload = this._buf.slice(4, 4 + len);
-      this._buf = this._buf.slice(4 + len);
+      const total = 4 + len;
+      if (this._len < total) break;
       try {
-        const event = JSON.parse(payload.toString('utf8'));
+        const event = JSON.parse(this._buf.toString('utf8', 4, total));
         if (typeof event.rawData === 'string') {
           event.rawData = Buffer.from(event.rawData, 'base64');
         }
         this._onMessage(event);
       } catch (e) { /* ignore malformed frames */ }
+      this._buf.copyWithin(0, total, this._len);
+      this._len -= total;
     }
   }
 }
@@ -90,6 +98,10 @@ class NetworkManager {
     this.bonjour = new Bonjour();
     this.port = 8124;
     this.serviceName = os.hostname().replace(/\.local$/, '');
+    this._batchDx = 0;
+    this._batchDy = 0;
+    this._batchTimer = null;
+    this._pendingSends = 0;
   }
 
   startServer() {
@@ -202,8 +214,48 @@ class NetworkManager {
   }
 
   sendEvent(event) {
-    if (this.client && !this.client.destroyed) {
-      this.client.write(encodeFrame(event));
+    if (!this.client || this.client.destroyed) return;
+
+    if (event.type === -3) {
+      this._batchDx += (event.dx || 0);
+      this._batchDy += (event.dy || 0);
+      if (!this._batchTimer) {
+        this._batchTimer = setTimeout(() => this._flushMouseBatch(), 8);
+      }
+      return;
+    }
+
+    if (event.type === -4) {
+      this._flushMouseBatch();
+    }
+
+    this._pendingSends++;
+    const ok = this.client.write(encodeFrame(event));
+    if (ok) {
+      this._pendingSends--;
+    } else {
+      this.client.once('drain', () => { this._pendingSends--; });
+    }
+  }
+
+  _flushMouseBatch() {
+    if (this._batchTimer) {
+      clearTimeout(this._batchTimer);
+      this._batchTimer = null;
+    }
+    const dx = this._batchDx;
+    const dy = this._batchDy;
+    this._batchDx = 0;
+    this._batchDy = 0;
+    if (dx === 0 && dy === 0) return;
+    if (!this.client || this.client.destroyed) return;
+    if (this._pendingSends > 3) return;
+    this._pendingSends++;
+    const ok = this.client.write(encodeFrame({ type: -3, dx, dy }));
+    if (ok) {
+      this._pendingSends--;
+    } else {
+      this.client.once('drain', () => { this._pendingSends--; });
     }
   }
 }

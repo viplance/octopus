@@ -102,7 +102,21 @@ function startApplication(shortcutChoice, monitorManager) {
         monitorManager.switchToThisMac();
         return;
       }
-      addon.injectEvent(event);
+      // Translate Swift wire format (type 0=mouseMove,1=mouseClick,3=keyDown,4=keyUp,5=raw)
+      // to addon format (-3=mouseMove,-4=mouseClick,-2=raw,10/11=key)
+      if (event.type === 0) {
+        addon.injectEvent({ type: -3, dx: event.dx || 0, dy: event.dy || 0 });
+      } else if (event.type === 1) {
+        addon.injectEvent({ type: -4, dx: event.dx || 0, dy: event.dy || 0, mouseButton: event.button || 0, isDown: event.isDown !== false });
+      } else if (event.type === 3) {
+        addon.injectEvent({ type: 10, keycode: event.keyCode || 0, flags: event.flags || 0 });
+      } else if (event.type === 4) {
+        addon.injectEvent({ type: 11, keycode: event.keyCode || 0, flags: event.flags || 0 });
+      } else if (event.type === 5 && event.rawData) {
+        addon.injectEvent({ type: -2, rawData: event.rawData });
+      } else {
+        addon.injectEvent(event);
+      }
     },
     () => {
       isPeerConnected = true;
