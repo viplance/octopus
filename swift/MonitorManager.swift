@@ -138,6 +138,11 @@ class MonitorManager: ObservableObject {
     @Published var isQuerying = false
     @Published var lastError: String?
     @Published var detectedDevices: [SmartThingsDevice] = []
+    // Set by AppState whenever the list of local Bluetooth/HID devices
+    // changes. A Mac with zero input devices acts purely as a slave receiver,
+    // so the token-refresh scheduler must not run there even if the synced
+    // config has autoRefreshTokenEnabled=true.
+    @Published var hasLocalInputDevices: Bool = false
 
     // Lazy because SmartThingsTokenAutomation captures `self`; we can't init
     // it as a stored property without referencing `self` before init completes.

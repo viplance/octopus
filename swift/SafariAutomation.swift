@@ -114,6 +114,15 @@ enum SafariAutomation {
         throw AutomationError.scriptError("Timed out waiting for: \(predicateJS.prefix(80))…", -1)
     }
 
+    /// True if `url`'s actual host (NOT the full string) matches the given
+    /// host. Avoids the bug where `.contains("account.smartthings.com")`
+    /// would match `account.samsung.com/iam/oauth2/?redirect_uri=...account.smartthings.com...`
+    /// because the smartthings host appears inside the query string.
+    static func urlHostIs(_ url: String, host expected: String) -> Bool {
+        guard let parsed = URL(string: url), let h = parsed.host else { return false }
+        return h.caseInsensitiveCompare(expected) == .orderedSame
+    }
+
     /// Returns the URL of Safari's front document, or nil if none.
     static func frontURL() throws -> String? {
         let script = """

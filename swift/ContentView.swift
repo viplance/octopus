@@ -87,7 +87,14 @@ struct ContentView: View {
             Divider()
 
             // ── Monitor switching ─────────────────────────────────────────────
-            MonitorSectionView(monitor: appState.monitorManager)
+            MonitorSectionView(
+                monitor: appState.monitorManager,
+                // Slaves have no input devices attached — they only receive
+                // events from master. Use this to hide SmartThings token
+                // controls on slave (they're meaningless there anyway since
+                // master owns the token).
+                hasInputDevices: !appState.availableDevices.isEmpty
+            )
 
             Divider()
 
@@ -151,6 +158,7 @@ struct ContentView: View {
 
 struct MonitorSectionView: View {
     @ObservedObject var monitor: MonitorManager
+    let hasInputDevices: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -199,7 +207,12 @@ struct MonitorSectionView: View {
 
                 // ── SmartThings fields (only in SmartThings mode) ──────────
                 if monitor.config.monitorMode == .smartThings {
-                    if monitor.config.isMasterForSmartThings {
+                    // Show the token/device controls only if this Mac is the
+                    // master AND it actually has input devices. A Mac with no
+                    // local Bluetooth keyboard/mouse is by definition a slave
+                    // receiver — exposing the Refresh controls there would
+                    // race the master and invalidate freshly-minted tokens.
+                    if monitor.config.isMasterForSmartThings && hasInputDevices {
                         // Master: full configuration, owns all SmartThings requests
                         SmartThingsTokenView(
                             monitor: monitor,
@@ -424,18 +437,6 @@ struct SmartThingsTokenView: View {
             }
 
             if monitor.config.autoRefreshTokenEnabled {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Google Account (for SSO)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    TextField("optional — leave empty for first listed", text: Binding(
-                        get: { monitor.config.googleAccountEmail },
-                        set: { monitor.config.googleAccountEmail = $0 }
-                    ))
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .font(.caption2)
-                }
-
                 HStack {
                     Button(action: { Task { await automation.refreshNow() } }) {
                         HStack(spacing: 4) {
@@ -448,7 +449,7 @@ struct SmartThingsTokenView: View {
                     Spacer()
                 }
                 statusLine
-                Text("Opens Safari at account.smartthings.com/tokens and generates a fresh 24h token. If logged out, signs you in via Google SSO. You must be logged in to Google in Safari.")
+                Text("Opens Safari at account.smartthings.com/tokens and generates a fresh 24h token. If the SmartThings session expired, sign in manually once — Safari will keep the session for weeks afterward.")
                     .font(.caption2)
                     .foregroundColor(.gray)
                     .fixedSize(horizontal: false, vertical: true)

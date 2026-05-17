@@ -49,15 +49,27 @@ final class SmartThingsTokenAutomation: ObservableObject {
     init(monitor: MonitorManager) {
         self.monitor = monitor
 
-        // Auto-start/stop wake/unlock observers based on the user's preference.
-        monitor.$config
-            .map(\.autoRefreshTokenEnabled)
-            .removeDuplicates()
-            .sink { [weak self] enabled in
-                guard let self else { return }
-                if enabled { self.startScheduler() } else { self.stopScheduler() }
-            }
-            .store(in: &cancellables)
+        // Auto-start/stop wake/unlock observers. The scheduler runs only on
+        // a Mac that (a) has auto-refresh enabled, (b) is the SmartThings
+        // master, and (c) actually has local input devices attached.
+        //
+        // (c) is the catch — a slave Mac receives the config from master
+        // via monitorConfigSync, including autoRefreshTokenEnabled=true.
+        // Without the hasLocalInputDevices guard, the slave would race the
+        // master to mint tokens and invalidate the master's.
+        Publishers.CombineLatest(
+            monitor.$config.map { ($0.autoRefreshTokenEnabled, $0.isMasterForSmartThings) },
+            monitor.$hasLocalInputDevices
+        )
+        .map { configFlags, hasDevices in
+            configFlags.0 && configFlags.1 && hasDevices
+        }
+        .removeDuplicates()
+        .sink { [weak self] shouldRun in
+            guard let self else { return }
+            if shouldRun { self.startScheduler() } else { self.stopScheduler() }
+        }
+        .store(in: &cancellables)
     }
 
     deinit {
@@ -132,6 +144,20 @@ final class SmartThingsTokenAutomation: ObservableObject {
     //    one refresh; subsequent wakes the same day are no-ops.
     func refreshIfDue(trigger: String) async {
         guard monitor.config.autoRefreshTokenEnabled else { return }
+        // Only the master Mac touches SmartThings — slave receives the
+        // token via monitorConfigSync from master. Without this guard both
+        // Macs would race to mint tokens, each invalidating the other's.
+        guard monitor.config.isMasterForSmartThings else {
+            AutomationLog.log("refreshIfDue trigger=\(trigger): skipped — this Mac is slave for SmartThings")
+            return
+        }
+        // Belt-and-suspenders against (a): a Mac with no local input devices
+        // is by definition a receive-only slave, even if the config flag
+        // says master (e.g. between launch and the first sync).
+        guard monitor.hasLocalInputDevices else {
+            AutomationLog.log("refreshIfDue trigger=\(trigger): skipped — no local input devices")
+            return
+        }
 
         let issued = monitor.config.tokenIssuedAt
         let now = Date()
@@ -164,7 +190,18 @@ final class SmartThingsTokenAutomation: ObservableObject {
 
     /// Forces a refresh regardless of token age. Wired up to the "Refresh now"
     /// button in the UI so the user can test the flow without waiting.
+    /// No-op on the slave — see refreshIfDue for the same guard.
     func refreshNow() async {
+        guard monitor.config.isMasterForSmartThings else {
+            lastError = "This Mac is a SmartThings slave — token is managed by the master Mac."
+            AutomationLog.log("refreshNow: skipped — slave")
+            return
+        }
+        guard monitor.hasLocalInputDevices else {
+            lastError = "This Mac has no local input devices — token refresh is for the master Mac."
+            AutomationLog.log("refreshNow: skipped — no local input devices")
+            return
+        }
         guard !isRunning else { return }
         isRunning = true
         lastError = nil
@@ -172,20 +209,14 @@ final class SmartThingsTokenAutomation: ObservableObject {
         defer { isRunning = false }
 
         do {
-            let preferredEmail = monitor.config.googleAccountEmail
             // Step reporter — captured into the nonisolated flow via a
             // MainActor-hopping closure. Without this we can't see where the
             // automation is stuck; the previous version was completely opaque.
             let report: @Sendable (String) -> Void = { [weak self] step in
-                // Capture weak self once, hand it to the Task. Avoids the
-                // Swift 6 "captured var in concurrently-executing code" warn.
                 let weakSelf = self
                 Task { @MainActor in weakSelf?.lastStep = step }
             }
-            let token = try await Self.executeFlow(
-                googleAccountEmail: preferredEmail,
-                report: report
-            )
+            let token = try await Self.executeFlow(report: report)
             monitor.config.personalAccessToken = token
             monitor.config.tokenIssuedAt = Date()
             lastRefreshAt = Date()
@@ -200,19 +231,21 @@ final class SmartThingsTokenAutomation: ObservableObject {
     // The DOM-level dance. nonisolated so we can call it from any context —
     // it only touches SafariAutomation (which is itself non-actor-bound).
     nonisolated static func executeFlow(
-        googleAccountEmail: String = "",
         report: @Sendable (String) -> Void = { _ in }
     ) async throws -> String {
-        AutomationLog.log("=== executeFlow start (googleAccountEmail=\(googleAccountEmail.isEmpty ? "<empty>" : googleAccountEmail)) ===")
+        AutomationLog.log("=== executeFlow start ===")
         report("opening tokens page")
         AutomationLog.log("step: opening tokens page (\(tokensURL))")
         try await SafariAutomation.openURL(tokensURL)
 
-        // SmartThings may bounce us through Samsung's IAM if the session
-        // expired. Detect that and run the Google SSO flow before continuing.
+        // If SmartThings bounced us to Samsung IAM, surface a clear error
+        // and stop — Google SSO automation under Apple Events is unreliable
+        // (Google's gsi-web SDK silently drops the storage event that should
+        // hand the id_token to Samsung's opener). User must sign in once
+        // manually, then we'll continue minting tokens.
         report("checking login")
         AutomationLog.log("step: checking login")
-        try await ensureLoggedIn(googleAccountEmail: googleAccountEmail)
+        try await ensureLoggedIn()
 
         // Even if we're already on a /tokens/new from a previous half-done
         // run, force navigation back to /tokens. Operating on a stale form
@@ -428,253 +461,52 @@ final class SmartThingsTokenAutomation: ObservableObject {
          .replacingOccurrences(of: "\n", with: "\\n")
     }
 
-    // MARK: - Login flow
 
-    // Detects whether SmartThings bounced us to Samsung's IAM. If so, clicks
-    // "Sign in with Google" and waits for the redirect back to smartthings.com.
-    //
-    // Samsung's button opens Google in a NEW Safari window (title="New Window
-    // Opens"). Google, if the user is already logged in, immediately POSTs the
-    // SAML/OIDC response back to account.smartthings.com/ssoCallback in that
-    // new window. The original window then receives a postMessage and reloads
-    // — but we don't rely on that. We:
-    //   1. Click the Google button → new tab/window opens.
-    //   2. Wait for ANY tab whose URL is the smartthings ssoCallback or the
-    //      eventual /tokens URL.
-    //   3. Focus that tab and verify we landed on /tokens.
-    nonisolated private static func ensureLoggedIn(googleAccountEmail: String) async throws {
-        // Quick check: if the front page already has the tokens button, we're
-        // logged in and there's nothing to do. We give the SPA a beat to mount.
-        for _ in 0..<3 {
-            if let url = try SafariAutomation.frontURL(),
-               url.contains("account.smartthings.com/tokens") {
-                // Page is on the right domain — check if the SPA rendered.
-                if let _ = try? SafariAutomation.runJS("""
-                    return document.querySelector('button.token-new-btn') ? '1' : '';
-                """), let v = try? SafariAutomation.runJS("""
-                    return document.querySelector('button.token-new-btn') ? '1' : '';
-                """), v == "1" {
-                    return
-                }
-            }
-            try await Task.sleep(nanoseconds: 500_000_000)
-        }
+    // MARK: - Login detection
 
-        // Are we on Samsung IAM? URL contains 'account.samsung.com/iam' when
-        // SmartThings redirected to login.
-        let url = (try? SafariAutomation.frontURL()) ?? ""
-        guard url.contains("account.samsung.com") else {
-            // Some other state — let the caller's waitForJS surface a real
-            // error. Either page is still loading, or we hit an unexpected
-            // intermediate page (TOS update, etc.).
-            return
-        }
-
-        // Wait for Samsung's IAM page to render the Google button. The page
-        // is a React app and the button mounts after auth-options load.
-        _ = try await SafariAutomation.waitForJS("""
-            return document.querySelector('button[data-log-id="signin-with-google"]') ? '1' : '';
-        """, timeout: 15)
-
-        // Snapshot existing tab URLs so we can detect the new Google window/tab.
-        let initialTabs = Set((try? SafariAutomation.allTabURLs()) ?? [])
-
-        // Click. Samsung opens this in a new window because the button has
-        // title="New Window Opens".
-        _ = try SafariAutomation.runJS("""
-            var el = document.querySelector('button[data-log-id="signin-with-google"]');
-            if (!el) return '';
-            el.click();
-            return '1';
-        """)
-
-        // Wait for either:
-        //  - a new tab to appear that contains accounts.google.com or
-        //    smartthings.com/ssoCallback, OR
-        //  - the front URL to navigate to smartthings.com on its own (Google
-        //    sometimes redirects so fast we never see the accounts.google.com URL).
-        let callbackTab = try await waitForCallbackTab(initialTabs: initialTabs, timeout: 30)
-
-        // Focus that tab. If it's still on accounts.google.com we might need
-        // to wait — Google's consent screen sometimes asks "Continue as X".
-        try SafariAutomation.focusTabContaining(callbackTab)
-
-        // If we landed on a Google consent screen, drive it forward.
-        if callbackTab.contains("accounts.google.com") {
-            try? await handleGoogleSSO(preferredEmail: googleAccountEmail)
-            // After consent, Google posts the SSO callback in this same popup
-            // and then a window.opener-driven script usually closes it. We
-            // can't watchForJS in a tab that's about to vanish — it returns
-            // -600. Instead poll all-tab URLs:
-            //   - success if any tab contains smartthings.com/ssoCallback or /tokens
-            //   - also success if the popup tab simply closed (page-side script
-            //     calls window.close() right after posting the callback)
-            try await waitForGoogleSSOCompletion(popupURL: callbackTab, timeout: 60)
-        }
-
-        // The popup is either closed or on smartthings.com. Either way, the
-        // ORIGINAL Samsung tab is now stale (still showing the IAM page) and
-        // never received the redirect. Bring it to the front and explicitly
-        // navigate it to /tokens — now that Samsung's session cookie is set,
-        // it'll pass through cleanly.
-        try await SafariAutomation.openURL(tokensURL)
-    }
-
-    // After Google consent, the popup either (a) navigates to
-    // account.smartthings.com/ssoCallback and stays open, or (b) does the
-    // callback and immediately closes itself. We accept either as success.
-    nonisolated private static func waitForGoogleSSOCompletion(popupURL: String, timeout: TimeInterval) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
+    // Confirms we're on account.smartthings.com/tokens with the SPA mounted.
+    // If SmartThings bounced us to Samsung IAM (session expired), throws a
+    // clear error asking the user to sign in once. Earlier versions tried to
+    // automate the Google SSO popup; under Apple Events automation Google's
+    // gsi-web SDK silently drops the storage event that should hand the
+    // id_token back to Samsung's opener, so the parent never advances. After
+    // many iterations we decided the only reliable path is to require one
+    // manual login and then refresh autonomously while that session lasts.
+    nonisolated private static func ensureLoggedIn() async throws {
+        // The SmartThings SPA may take a beat to mount even when we're
+        // already logged in. Poll for up to 10 seconds.
+        let deadline = Date().addingTimeInterval(10)
         while Date() < deadline {
-            let tabs = (try? SafariAutomation.allTabURLs()) ?? []
-            // (a) Any tab on smartthings.com means the callback succeeded.
-            if tabs.contains(where: { $0.contains("smartthings.com") }) {
+            let url = (try? SafariAutomation.frontURL()) ?? ""
+
+            // Happy path: on the tokens page with the SPA rendered.
+            if SafariAutomation.urlHostIs(url, host: "account.smartthings.com"),
+               url.contains("/tokens"),
+               let v = try? SafariAutomation.runJS("""
+                   return document.querySelector('button.token-new-btn')
+                       || document.querySelector('input[name="inputTokenName"]') ? '1' : '';
+               """), v == "1" {
+                AutomationLog.log("ensureLoggedIn: already logged in")
                 return
             }
-            // (b) The popup vanished — popup script called window.close()
-            // after posting the SSO callback. That's also success.
-            //
-            // We detect this by checking whether ANY tab still has the
-            // accounts.google.com URL we started from. Popups don't change
-            // URL after consent → if it's gone, it closed itself.
-            let popupStillOpen = tabs.contains { tab in
-                tab.contains("accounts.google.com")
+
+            // Bounced to Samsung IAM → user must sign in manually.
+            if SafariAutomation.urlHostIs(url, host: "account.samsung.com") {
+                AutomationLog.log("ensureLoggedIn: redirected to Samsung IAM — manual login required")
+                throw SafariAutomation.AutomationError.scriptError(
+                    "SmartThings session expired. Safari is open on the Samsung login page — please sign in once, then click Refresh again.",
+                    -1
+                )
             }
-            if !popupStillOpen {
-                return
-            }
+
             try await Task.sleep(nanoseconds: 500_000_000)
         }
+
+        let finalURL = (try? SafariAutomation.frontURL()) ?? "<unknown>"
+        AutomationLog.log("ensureLoggedIn: timed out on \(finalURL)")
         throw SafariAutomation.AutomationError.scriptError(
-            "Google SSO popup did not complete within \(Int(timeout))s. If the consent screen requires manual confirmation, click it and try Refresh again.",
+            "Could not reach \(tokensURL). Front URL after 10s: \(finalURL)",
             -1
         )
-    }
-
-    nonisolated private static func waitForCallbackTab(initialTabs: Set<String>, timeout: TimeInterval) async throws -> String {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            let tabs = (try? SafariAutomation.allTabURLs()) ?? []
-            for tab in tabs where !initialTabs.contains(tab) {
-                if tab.contains("smartthings.com") || tab.contains("accounts.google.com") {
-                    return tab
-                }
-            }
-            // Also: if the original samsung tab navigated directly to smartthings
-            // (without spawning a popup), accept that too.
-            if let front = try? SafariAutomation.frontURL(), front.contains("smartthings.com") {
-                return front
-            }
-            try await Task.sleep(nanoseconds: 500_000_000)
-        }
-        throw SafariAutomation.AutomationError.scriptError(
-            "Google SSO did not redirect back to SmartThings within \(Int(timeout))s. You may need to sign in to Google in Safari first.",
-            -1
-        )
-    }
-
-    // Drives Google's OAuth screens forward. Returns when we've either
-    // clicked everything we can or hit something we don't recognise — caller
-    // does the final wait for the redirect to smartthings.com.
-    //
-    // Sequence we may see:
-    //   1. Account chooser. Rows have `div[data-email="..."]`. If the user
-    //      configured a preferred email, pick that one; otherwise pick the
-    //      first row.
-    //   2. After the chooser, Google sometimes renders an interstitial
-    //      "Continue" / "Allow" screen — handled by the second pass.
-    //   3. Occasionally an extra "Confirm you're you" or scope-consent screen
-    //      shows up; we click the primary button if it matches known selectors.
-    nonisolated private static func handleGoogleSSO(preferredEmail: String) async throws {
-        // Give the chooser a beat to mount. Google's page is a SPA so the
-        // accounts often render after first paint.
-        try await Task.sleep(nanoseconds: 1_500_000_000)
-
-        // Step 1: account chooser.
-        _ = try? await clickGoogleAccount(preferredEmail: preferredEmail)
-
-        // Step 2: consent / continue screen. Loop a few times since the
-        // chooser → consent transition isn't instant and sometimes there are
-        // two consent pages back to back ("Continue" then "Allow").
-        for _ in 0..<3 {
-            try await Task.sleep(nanoseconds: 1_500_000_000)
-            // Stop if Google already bounced us back to SmartThings.
-            if let url = try? SafariAutomation.frontURL(), url.contains("smartthings.com") {
-                return
-            }
-            let clicked = (try? SafariAutomation.runJS("""
-                var sel = [
-                    '#confirm',
-                    'button[jsname="LgbsSe"]',
-                    'button[jsname="V67aGc"]',
-                    'div[role="button"][jsname="LgbsSe"]'
-                ];
-                for (var i = 0; i < sel.length; i++) {
-                    var el = document.querySelector(sel[i]);
-                    if (el && el.offsetParent !== null) { el.click(); return '1'; }
-                }
-                return '';
-            """)) ?? nil
-            if clicked != "1" { break }
-        }
-    }
-
-    // Clicks an account row in Google's chooser. If `preferredEmail` is
-    // non-empty, only clicks the row matching that email and throws if not
-    // found (so user sees a clear "configure this email" error instead of
-    // signing in to the wrong account). If empty, clicks the first row.
-    nonisolated private static func clickGoogleAccount(preferredEmail: String) async throws {
-        // Wait for at least one account row to mount.
-        _ = try await SafariAutomation.waitForJS("""
-            return document.querySelector('[data-email]') ? '1' : '';
-        """, timeout: 15)
-
-        let emailJS = escapeJSString(preferredEmail)
-        let result = try SafariAutomation.runJS("""
-            var preferred = "\(emailJS)";
-            var rows = document.querySelectorAll('[data-email]');
-            if (rows.length === 0) return 'NO_ROWS';
-            var target = null;
-            if (preferred) {
-                for (var i = 0; i < rows.length; i++) {
-                    if ((rows[i].getAttribute('data-email') || '').toLowerCase() === preferred.toLowerCase()) {
-                        target = rows[i];
-                        break;
-                    }
-                }
-                if (!target) return 'EMAIL_NOT_LISTED';
-            } else {
-                target = rows[0];
-            }
-            // The clickable element may be an ancestor. Walk up until we find
-            // something with role="link" or a parent <li>/<div role="button">.
-            var el = target;
-            for (var depth = 0; depth < 5 && el; depth++) {
-                if (el.getAttribute && (el.getAttribute('role') === 'link' || el.getAttribute('role') === 'button')) break;
-                el = el.parentElement;
-            }
-            (el || target).click();
-            return 'OK';
-        """) ?? ""
-
-        switch result {
-        case "OK":
-            return
-        case "EMAIL_NOT_LISTED":
-            throw SafariAutomation.AutomationError.scriptError(
-                "Google account '\(preferredEmail)' is not signed in to this Safari. Sign in to it first, or clear the email field to use the first available account.",
-                -1
-            )
-        case "NO_ROWS":
-            throw SafariAutomation.AutomationError.scriptError(
-                "Google account chooser had no accounts to pick from.",
-                -1
-            )
-        default:
-            throw SafariAutomation.AutomationError.scriptError(
-                "Unexpected response from Google chooser: \(result)",
-                -1
-            )
-        }
     }
 }

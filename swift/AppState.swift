@@ -169,6 +169,10 @@ class AppState: ObservableObject {
                     d.isSelected = saved.contains(d.name)
                     return d
                 }
+                // Mirror to MonitorManager so SmartThingsTokenAutomation's
+                // scheduler knows whether this Mac has any input devices and
+                // therefore whether it should ever refresh tokens.
+                self.monitorManager.hasLocalInputDevices = !devices.isEmpty
             }
             .store(in: &cancellables)
 
