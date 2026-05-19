@@ -12,6 +12,7 @@ class InputManager {
     // routing input through a dead tap and the machine appears frozen.
     var onTapBroken: (() -> Void)?
     var shortcutConfig: ShortcutConfig?
+    var allowedRegistryIDs: Set<UInt64> = []
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -37,6 +38,11 @@ class InputManager {
     
     func startCapture(devices: [BluetoothDevice]) {
         guard !devices.isEmpty else { return }
+        
+        self.allowedRegistryIDs = []
+        for device in devices {
+            self.allowedRegistryIDs.formUnion(device.registryIDs)
+        }
         
         let locEvent = CGEvent(source: nil)
         savedCursorPosition = locEvent?.location
@@ -111,6 +117,13 @@ class InputManager {
                 if keyCode == config.keyCode && mods == config.modifiers {
                     DispatchQueue.main.async { manager.onToggleShortcut?() }
                     return nil
+                }
+            }
+
+            if let field = CGEventField(rawValue: 87) {
+                let registryID = UInt64(event.getIntegerValueField(field))
+                if registryID != 0 && !manager.allowedRegistryIDs.contains(registryID) {
+                    return Unmanaged.passRetained(event)
                 }
             }
 

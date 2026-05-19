@@ -83,9 +83,14 @@ class DeviceManager: ObservableObject {
                 }
             }
             
-            let btDevice = BluetoothDevice(name: name, type: type)
-            // Prevent duplicates (some devices register multiple interfaces)
-            if !newDevices.contains(where: { $0.name == name && $0.type == type }) {
+            let service = IOHIDDeviceGetService(device)
+            var registryID: UInt64 = 0
+            IORegistryEntryGetRegistryEntryID(service, &registryID)
+            
+            if let index = newDevices.firstIndex(where: { $0.name == name && $0.type == type }) {
+                newDevices[index].registryIDs.insert(registryID)
+            } else {
+                let btDevice = BluetoothDevice(name: name, type: type, isSelected: false, registryIDs: [registryID])
                 newDevices.append(btDevice)
             }
         }
