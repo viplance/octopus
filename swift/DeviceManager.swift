@@ -1,4 +1,5 @@
 import Foundation
+import IOKit
 import IOKit.hid
 import Combine
 
@@ -27,6 +28,24 @@ class DeviceManager: ObservableObject {
         }
     }
 
+    private func collectRegistryIDs(for entry: io_registry_entry_t, into set: inout Set<UInt64>) {
+        var id: UInt64 = 0
+        if IORegistryEntryGetRegistryEntryID(entry, &id) == KERN_SUCCESS {
+            set.insert(id)
+        }
+        
+        var iterator: io_iterator_t = 0
+        if IORegistryEntryGetChildIterator(entry, kIOServicePlane, &iterator) == KERN_SUCCESS {
+            defer { IOObjectRelease(iterator) }
+            var child = IOIteratorNext(iterator)
+            while child != 0 {
+                collectRegistryIDs(for: child, into: &set)
+                IOObjectRelease(child)
+                child = IOIteratorNext(iterator)
+            }
+        }
+    }
+
     private func refreshDevicesSync() {
         guard let hidManager = hidManager else { return }
         
@@ -43,6 +62,10 @@ class DeviceManager: ObservableObject {
             [
                 kIOHIDDeviceUsagePageKey as String: kHIDPage_GenericDesktop,
                 kIOHIDDeviceUsageKey as String: kHIDUsage_GD_Pointer
+            ] as CFDictionary,
+            [
+                kIOHIDDeviceUsagePageKey as String: 0x0D, // kHIDPage_Digitizer
+                kIOHIDDeviceUsageKey as String: 0x05  // kHIDUsage_Dig_TouchPad
             ] as CFDictionary
         ]
         
@@ -81,16 +104,20 @@ class DeviceManager: ObservableObject {
                 } else if usage == kHIDUsage_GD_Pointer {
                     type = .touchpad
                 }
+            } else if usagePage == 0x0D { // kHIDPage_Digitizer
+                if usage == 0x05 { // kHIDUsage_Dig_TouchPad
+                    type = .touchpad
+                }
             }
             
             let service = IOHIDDeviceGetService(device)
-            var registryID: UInt64 = 0
-            IORegistryEntryGetRegistryEntryID(service, &registryID)
+            var deviceIDs = Set<UInt64>()
+            collectRegistryIDs(for: service, into: &deviceIDs)
             
             if let index = newDevices.firstIndex(where: { $0.name == name && $0.type == type }) {
-                newDevices[index].registryIDs.insert(registryID)
+                newDevices[index].registryIDs.formUnion(deviceIDs)
             } else {
-                let btDevice = BluetoothDevice(name: name, type: type, isSelected: false, registryIDs: [registryID])
+                let btDevice = BluetoothDevice(name: name, type: type, isSelected: false, registryIDs: deviceIDs)
                 newDevices.append(btDevice)
             }
         }
