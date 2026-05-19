@@ -256,7 +256,7 @@ class AppState: ObservableObject {
                    let str = String(data: json, encoding: .utf8) {
                     let syncEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil,
                                                keyCode: nil, isDown: nil, flags: nil, rawData: nil,
-                                               control: "shortcutSync:\(str)")
+                                               control: "shortcutSync:\(str)", clickCount: nil)
                     self.networkManager.sendEvent(syncEvent)
                 }
             }
@@ -283,12 +283,12 @@ class AppState: ObservableObject {
             else { return }
             let event = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil,
                                    keyCode: nil, isDown: nil, flags: nil, rawData: nil,
-                                   control: "monitorConfigSync:\(str)")
+                                   control: "monitorConfigSync:\(str)", clickCount: nil)
             networkManager.sendEvent(event)
         } else if !config.isMasterForSmartThings && !config.myInputSource.isEmpty {
             let event = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil,
                                    keyCode: nil, isDown: nil, flags: nil, rawData: nil,
-                                   control: "inputSourceSync:\(config.myInputSource)")
+                                   control: "inputSourceSync:\(config.myInputSource)", clickCount: nil)
             networkManager.sendEvent(event)
         }
     }
@@ -351,7 +351,7 @@ class AppState: ObservableObject {
         isSharingActive.toggle()
 
         if isSharingActive {
-            let focusEvent = InputEvent(type: .mouseMove, dx: 0, dy: 0, button: 0, keyCode: 0, isDown: false, flags: 0, rawData: nil, control: "gainFocus")
+            let focusEvent = InputEvent(type: .mouseMove, dx: 0, dy: 0, button: nil, keyCode: 0, isDown: false, flags: 0, rawData: nil, control: "gainFocus", clickCount: nil)
             networkManager.sendEvent(focusEvent)
             // Direct mode: sleep our display so the monitor auto-switches to peer.
             monitorManager.switchToPeer()

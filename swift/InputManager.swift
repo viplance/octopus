@@ -25,6 +25,12 @@ class InputManager {
     private var batchTimer: CFRunLoopTimer?
     private static let batchInterval: CFTimeInterval = 0.008
 
+    // Tracks which mouse button (if any) is currently held on the master so
+    // that batched cursor movement can be flagged as a drag on the slave —
+    // macOS apps ignore plain mouseMoved events while a button is down and
+    // expect leftMouseDragged / rightMouseDragged instead.
+    fileprivate var heldMouseButton: Int?
+
     deinit {
         stopCapture()
     }
@@ -126,7 +132,16 @@ class InputManager {
                 let dy = event.getDoubleValueField(.mouseEventDeltaY)
                 let button: Int = (type == .rightMouseDown || type == .rightMouseUp) ? 1 : 0
                 let isDown = (type == .leftMouseDown || type == .rightMouseDown)
-                let clickEvent = InputEvent(type: .mouseClick, dx: dx, dy: dy, button: button, keyCode: nil, isDown: isDown, flags: nil, rawData: nil, control: nil)
+                // Preserve macOS click-state so the slave can rebuild double/triple-clicks.
+                // Without this, a fast Down/Up/Down/Up sequence is replayed as four
+                // separate single clicks and apps never see a double-click.
+                let clickState = Int(event.getIntegerValueField(.mouseEventClickState))
+                if isDown {
+                    manager.heldMouseButton = button
+                } else if manager.heldMouseButton == button {
+                    manager.heldMouseButton = nil
+                }
+                let clickEvent = InputEvent(type: .mouseClick, dx: dx, dy: dy, button: button, keyCode: nil, isDown: isDown, flags: nil, rawData: nil, control: nil, clickCount: clickState)
                 manager.onEventCaptured?(clickEvent)
                 return nil
             default:
@@ -225,7 +240,10 @@ class InputManager {
         batchDx = 0
         batchDy = 0
         guard dx != 0 || dy != 0 else { return }
-        let moveEvent = InputEvent(type: .mouseMove, dx: dx, dy: dy, button: nil, keyCode: nil, isDown: nil, flags: nil, rawData: nil, control: nil)
+        // If a mouse button is currently held, encode this batch as a drag so
+        // the slave can post leftMouseDragged / rightMouseDragged. The button
+        // field carries the held button index (0 = left, 1 = right).
+        let moveEvent = InputEvent(type: .mouseMove, dx: dx, dy: dy, button: heldMouseButton, keyCode: nil, isDown: nil, flags: nil, rawData: nil, control: nil, clickCount: nil)
         onEventCaptured?(moveEvent)
     }
 
@@ -236,24 +254,26 @@ class InputManager {
         case .keyDown:
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags.rawValue
-            inputEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: true, flags: flags, rawData: nil, control: nil)
+            inputEvent = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: true, flags: flags, rawData: nil, control: nil, clickCount: nil)
         case .keyUp:
             let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags.rawValue
-            inputEvent = InputEvent(type: .keyUp, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: false, flags: flags, rawData: nil, control: nil)
+            inputEvent = InputEvent(type: .keyUp, dx: nil, dy: nil, button: nil, keyCode: keyCode, isDown: false, flags: flags, rawData: nil, control: nil, clickCount: nil)
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged:
             let dx = event.getDoubleValueField(.mouseEventDeltaX)
             let dy = event.getDoubleValueField(.mouseEventDeltaY)
-            inputEvent = InputEvent(type: .mouseMove, dx: dx, dy: dy, button: nil, keyCode: nil, isDown: nil, flags: nil, rawData: nil, control: nil)
+            let dragButton: Int? = (type == .leftMouseDragged) ? 0 : (type == .rightMouseDragged ? 1 : nil)
+            inputEvent = InputEvent(type: .mouseMove, dx: dx, dy: dy, button: dragButton, keyCode: nil, isDown: nil, flags: nil, rawData: nil, control: nil, clickCount: nil)
         case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp:
             let dx = event.getDoubleValueField(.mouseEventDeltaX)
             let dy = event.getDoubleValueField(.mouseEventDeltaY)
             let button: Int = (type == .rightMouseDown || type == .rightMouseUp) ? 1 : 0
             let isDown = (type == .leftMouseDown || type == .rightMouseDown)
-            inputEvent = InputEvent(type: .mouseClick, dx: dx, dy: dy, button: button, keyCode: nil, isDown: isDown, flags: nil, rawData: nil, control: nil)
+            let clickState = Int(event.getIntegerValueField(.mouseEventClickState))
+            inputEvent = InputEvent(type: .mouseClick, dx: dx, dy: dy, button: button, keyCode: nil, isDown: isDown, flags: nil, rawData: nil, control: nil, clickCount: clickState)
         default:
             if let data = event.data {
-                inputEvent = InputEvent(type: .raw, dx: nil, dy: nil, button: nil, keyCode: nil, isDown: nil, flags: nil, rawData: data as Data, control: nil)
+                inputEvent = InputEvent(type: .raw, dx: nil, dy: nil, button: nil, keyCode: nil, isDown: nil, flags: nil, rawData: data as Data, control: nil, clickCount: nil)
             }
             break
         }
@@ -302,7 +322,21 @@ class InputManager {
             loc.x += dx
             loc.y += dy
             clampToScreen(&loc)
-            if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: loc, mouseButton: .left) {
+            // When a mouse button is held on the master, the captured event
+            // carries the held button index in `button`. We must synthesize a
+            // drag event here — plain mouseMoved while a button is down is
+            // dropped by AppKit drag-tracking machinery, breaking drag&drop
+            // and text selection.
+            let moveType: CGEventType
+            let moveBtn: CGMouseButton
+            if let held = event.button {
+                moveType = (held == 1) ? .rightMouseDragged : .leftMouseDragged
+                moveBtn = (held == 1) ? .right : .left
+            } else {
+                moveType = .mouseMoved
+                moveBtn = .left
+            }
+            if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: moveType, mouseCursorPosition: loc, mouseButton: moveBtn) {
                 moveEvent.setDoubleValueField(.mouseEventDeltaX, value: dx)
                 moveEvent.setDoubleValueField(.mouseEventDeltaY, value: dy)
                 moveEvent.post(tap: .cgSessionEventTap)
@@ -325,6 +359,12 @@ class InputManager {
             }
             let btn: CGMouseButton = isRight ? .right : .left
             if let clickEvent = CGEvent(mouseEventSource: nil, mouseType: clickType, mouseCursorPosition: loc, mouseButton: btn) {
+                // Replay the master's click-state so the slave's HIToolbox sees
+                // back-to-back clicks as a double/triple click rather than as N
+                // independent singles. Missing this is why double-click failed.
+                if let cs = event.clickCount, cs > 0 {
+                    clickEvent.setIntegerValueField(.mouseEventClickState, value: Int64(cs))
+                }
                 clickEvent.post(tap: .cgSessionEventTap)
             }
         case .raw:
