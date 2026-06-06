@@ -26,6 +26,17 @@ class InputManager {
     private var batchTimer: CFRunLoopTimer?
     private static let batchInterval: CFTimeInterval = 0.008
 
+    // Periodically verifies the tap is still live. macOS silently disables a
+    // CGEventTap (tapDisabledByTimeout) on system/display sleep-wake, HID
+    // re-enumeration, or a slow callback. The disabled-event re-enable path in
+    // the callback only runs if an event still reaches the callback — but once
+    // the tap is off, the captured mouse's events stop flowing through it, so
+    // that path never fires and the mouse appears dead until unrelated HID
+    // activity (e.g. the built-in trackpad) re-arms it. This watchdog re-enables
+    // the tap proactively so it can't get stuck off.
+    private var healthTimer: CFRunLoopTimer?
+    private static let healthInterval: CFTimeInterval = 1.0
+
     // Tracks which mouse button (if any) is currently held on the master so
     // that batched cursor movement can be flagged as a drag on the slave —
     // macOS apps ignore plain mouseMoved events while a button is down and
@@ -194,6 +205,7 @@ class InputManager {
                 runLoopReady.signal()
                 CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
                 CGEvent.tapEnable(tap: tap, enable: true)
+                self?.startHealthTimer()
                 CFRunLoopRun()
             }
             thread.qualityOfService = .userInteractive
@@ -212,6 +224,7 @@ class InputManager {
 
     func stopCapture() {
         flushMouseBatch()
+        stopHealthTimer()
         if let pos = savedCursorPosition {
             CGWarpMouseCursorPosition(pos)
         }
@@ -231,6 +244,35 @@ class InputManager {
         tapThread = nil
     }
     
+    // Runs on the tap thread's run loop. If the system disabled the tap behind
+    // our back, re-enable it. Re-enabling an already-enabled tap is a no-op, so
+    // it is safe to call every tick.
+    private func startHealthTimer() {
+        guard let loop = tapRunLoop else { return }
+        let timer = CFRunLoopTimerCreateWithHandler(kCFAllocatorDefault,
+                                                    CFAbsoluteTimeGetCurrent() + Self.healthInterval,
+                                                    Self.healthInterval, 0, 0) { [weak self] _ in
+            guard let self, let tap = self.eventTap else { return }
+            if !CGEvent.tapIsEnabled(tap: tap) {
+                CGEvent.tapEnable(tap: tap, enable: true)
+                // Still dead after a re-enable attempt → permission was revoked
+                // and we must hand local control back instead of swallowing input.
+                if !CGEvent.tapIsEnabled(tap: tap) {
+                    DispatchQueue.main.async { self.onTapBroken?() }
+                }
+            }
+        }
+        healthTimer = timer
+        CFRunLoopAddTimer(loop, timer, .commonModes)
+    }
+
+    private func stopHealthTimer() {
+        if let timer = healthTimer {
+            CFRunLoopTimerInvalidate(timer)
+            healthTimer = nil
+        }
+    }
+
     func accumulateMouseMove(dx: Double, dy: Double) {
         batchDx += dx
         batchDy += dy
