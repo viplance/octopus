@@ -69,17 +69,18 @@ struct ContentView: View {
                         .foregroundColor(.gray)
                 } else {
                     ForEach(appState.availableDevices) { device in
-                        Toggle(isOn: Binding(
-                            get: { device.isSelected },
-                            set: { _ in appState.toggleDeviceSelection(device) }
-                        )) {
-                            HStack {
-                                Image(systemName: iconForDevice(device.type))
-                                Text(device.name)
-                                    .lineLimit(1)
-                            }
+                        HStack {
+                            Image(systemName: iconForDevice(device.type))
+                            Text(device.name)
+                                .lineLimit(1)
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { device.isSelected },
+                                set: { _ in appState.toggleDeviceSelection(device) }
+                            ))
+                            .toggleStyle(SwitchToggleStyle(tint: .blue))
+                            .labelsHidden()
                         }
-                        .toggleStyle(SwitchToggleStyle(tint: .blue))
                     }
                 }
             }
@@ -416,12 +417,17 @@ struct SmartThingsTokenView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Toggle("Auto refresh token", isOn: Binding(
-                get: { monitor.config.autoRefreshTokenEnabled },
-                set: { monitor.config.autoRefreshTokenEnabled = $0 }
-            ))
-            .toggleStyle(SwitchToggleStyle(tint: .orange))
-            .font(.caption2)
+            HStack {
+                Text("Auto refresh token")
+                    .font(.caption2)
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { monitor.config.autoRefreshTokenEnabled },
+                    set: { monitor.config.autoRefreshTokenEnabled = $0 }
+                ))
+                .toggleStyle(SwitchToggleStyle(tint: .orange))
+                .labelsHidden()
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("SmartThings Token")
