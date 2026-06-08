@@ -12,6 +12,9 @@ final class MCPeerManager: NSObject {
     var onConnected: (() -> Void)?
     var onDisconnected: (() -> Void)?
     var onDataReceived: ((Data) -> Void)?
+    // Called with true when AWDL appears throttled (sent < 5/s for 3+ consecutive
+    // seconds while active), false when rate recovers. Used to show a warning.
+    var onThrottleChanged: ((Bool) -> Void)?
 
     private let serviceType = "octopussync"   // max 15 chars, lowercase alphanumeric + hyphen
     private let myPeerID = MCPeerID(displayName: Host.current().localizedName ?? ProcessInfo.processInfo.hostName)
@@ -68,6 +71,10 @@ final class MCPeerManager: NSObject {
         NetworkManager.log("[MC] stopped")
     }
 
+    // Consecutive low-rate seconds counter for throttle detection.
+    private var lowRateSeconds = 0
+    private var isThrottled = false
+
     // mouseMove frames are sent unreliable — no head-of-line blocking, stale
     // deltas are worthless anyway. Everything else (clicks, keys, control) uses
     // reliable so it is never silently dropped.
@@ -85,6 +92,20 @@ final class MCPeerManager: NSObject {
             }
             if now - diagWindowStart >= 1.0 {
                 NetworkManager.log("[MC] mouseMove sent=\(movesSentThisSecond) dropped=\(movesDroppedThisSecond) /s")
+                // AWDL throttle detection: if user is actively moving (we got events
+                // to send) but rate is < 5/s, AWDL radio is being starved by WiFi.
+                // 3 consecutive low-rate seconds → throttled.
+                let wasMoving = movesSentThisSecond + movesDroppedThisSecond > 0
+                if wasMoving && movesSentThisSecond < 5 {
+                    lowRateSeconds += 1
+                } else {
+                    lowRateSeconds = 0
+                }
+                let nowThrottled = lowRateSeconds >= 3
+                if nowThrottled != isThrottled {
+                    isThrottled = nowThrottled
+                    DispatchQueue.main.async { self.onThrottleChanged?(nowThrottled) }
+                }
                 movesSentThisSecond = 0; movesDroppedThisSecond = 0; diagWindowStart = now
             }
         }

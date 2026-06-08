@@ -25,6 +25,10 @@ class NetworkManager: ObservableObject {
     private enum ActiveTransport { case bonjour, multipeer }
     private var activeTransport: ActiveTransport?
 
+    // True when Direct/AWDL is being throttled by macOS (WiFi radio contention).
+    // Set by MCPeerManager diagnostics when send rate drops while connected.
+    @Published var directIsThrottled = false
+
     private var listener: NWListener?
     private var browser: NWBrowser?
     private var connection: NWConnection?
@@ -146,6 +150,7 @@ class NetworkManager: ObservableObject {
         mcPeer.onDisconnected = { [weak self] in
             guard let self else { return }
             DispatchQueue.main.async {
+                self.directIsThrottled = false
                 guard self.activeTransport == .multipeer else { return }
                 Self.log("[MC] disconnected — waiting 3s before teardown (AWDL may recover)")
                 // AWDL (Direct) sessions drop briefly when the radio is busy with
@@ -166,6 +171,9 @@ class NetworkManager: ObservableObject {
             self.drainFrames()
         }
 
+        mcPeer.onThrottleChanged = { [weak self] throttled in
+            self?.directIsThrottled = throttled
+        }
         mcPeer.start()
     }
 
@@ -383,6 +391,11 @@ class NetworkManager: ObservableObject {
         guard connectionStatus != .disconnected else { return }
         connectionStatus = .disconnected
 
+        // Stop the browser immediately so it can't race MC by connecting via
+        // Bonjour/WiFi while we're waiting for Direct to recover.
+        browser?.cancel()
+        browser = nil
+
         // Always restart MC immediately — it has the fastest path back to Direct.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self, self.started else { return }
@@ -390,9 +403,8 @@ class NetworkManager: ObservableObject {
             self.startMCPeer()
         }
 
-        // If the previous connection was Direct (MC), delay starting Bonjour/WiFi
-        // so MC gets a head start and we don't immediately fall back to WiFi.
-        // If it was already WiFi/Ethernet, start Bonjour right away.
+        // If the previous connection was Direct (MC), delay Bonjour so MC gets
+        // a head start. If it was WiFi/Ethernet, start Bonjour right away.
         let bonjourDelay: Double = wasDirectTransport ? 10 : 2
         DispatchQueue.main.asyncAfter(deadline: .now() + bonjourDelay) { [weak self] in
             guard let self, self.started, self.activeTransport == nil else { return }

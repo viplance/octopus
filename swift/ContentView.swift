@@ -27,6 +27,13 @@ struct ContentView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
 
+            if appState.directIsThrottled {
+                Label("Direct is slow — Wi-Fi radio is shared with AWDL. Turn off Wi-Fi on this Mac for smooth Direct.", systemImage: "antenna.radiowaves.left.and.right.slash")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if !appState.isAccessibilityGranted {
                 Button(action: {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
