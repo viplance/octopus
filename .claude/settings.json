@@ -3,7 +3,10 @@
     "allow": [
       "Bash(grep -iE \"\\\\.\\(tsx|jsx|ts|js|css|scss|html|vue|svelte\\)$\")",
       "Bash(swift build *)",
-      "Bash(ln -s ../../MCPeerManager.swift /Users/dzmitrysharko/Projects/OctopusSync/swift/Sources/OctopusSync/MCPeerManager.swift)"
+      "Bash(ln -s ../../MCPeerManager.swift /Users/dzmitrysharko/Projects/OctopusSync/swift/Sources/OctopusSync/MCPeerManager.swift)",
+      "Bash(ssh fundraiseup.local \"cat /tmp/octopus-debug.log\")",
+      "Bash(ssh FundraiseUp.local \"cat /tmp/octopus-debug.log\")",
+      "Bash(git fetch *)"
     ]
   }
 }

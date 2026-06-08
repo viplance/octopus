@@ -20,6 +20,9 @@ class NetworkManager: ObservableObject {
     }
 
     var onEventReceived: ((InputEvent) -> Void)?
+    var onPeerDiagnosticLog: ((String) -> Void)? {
+        didSet { mcPeer.onDiagnosticLog = onPeerDiagnosticLog }
+    }
 
     // Active transport that won the race to .connected.
     private enum ActiveTransport { case bonjour, multipeer }

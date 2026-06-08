@@ -194,6 +194,18 @@ class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // When this Mac is the receiver, forward diagnostic lines to the master
+        // via the existing event channel so both sides appear in one log file.
+        let sendDiag: (String) -> Void = { [weak self] line in
+            guard let self, self.connectionStatus == .connected else { return }
+            let event = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil,
+                                   keyCode: nil, isDown: nil, flags: nil, rawData: nil,
+                                   control: "peerLog:\(line)", clickCount: nil)
+            self.networkManager.sendEvent(event)
+        }
+        inputManager.onDiagnosticLog = sendDiag
+        networkManager.onPeerDiagnosticLog = sendDiag
+
         networkManager.onEventReceived = { [weak self] event in
             guard let self = self else { return }
 
@@ -224,6 +236,12 @@ class AppState: ObservableObject {
                         self.monitorManager.applySharedConfig(shared)
                     }
                 }
+                return
+            }
+
+            if let ctrl = event.control, ctrl.hasPrefix("peerLog:") {
+                let line = String(ctrl.dropFirst("peerLog:".count))
+                NetworkManager.log("[PEER] \(line)")
                 return
             }
 

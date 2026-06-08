@@ -11,6 +11,8 @@ class InputManager {
     // capture and return local control to the user, otherwise the OS keeps
     // routing input through a dead tap and the machine appears frozen.
     var onTapBroken: (() -> Void)?
+    // Called with each diagnostic log line so AppState can forward it to the peer.
+    var onDiagnosticLog: ((String) -> Void)?
     var shortcutConfig: ShortcutConfig?
     var allowedRegistryIDs: Set<UInt64> = []
 
@@ -399,8 +401,10 @@ class InputManager {
             if injectWindowStart == 0 { injectWindowStart = now }
             if now - injectWindowStart >= 1.0 {
                 let avgGap = gapSamples > 0 ? gapSum / Double(gapSamples) : 0
-                NetworkManager.log(String(format: "[Inject] mouseMove %d/s  gap avg=%.1fms max=%.1fms",
-                                          injectCount, avgGap, gapMax))
+                let line = String(format: "[Inject] mouseMove %d/s  gap avg=%.1fms max=%.1fms",
+                                  injectCount, avgGap, gapMax)
+                NetworkManager.log(line)
+                onDiagnosticLog?(line)
                 injectCount = 0; gapSum = 0; gapMax = 0; gapSamples = 0
                 injectWindowStart = now
             }

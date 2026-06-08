@@ -12,6 +12,7 @@ final class MCPeerManager: NSObject {
     var onConnected: (() -> Void)?
     var onDisconnected: (() -> Void)?
     var onDataReceived: ((Data) -> Void)?
+    var onDiagnosticLog: ((String) -> Void)?
     // Called with true when AWDL appears throttled (sent < 5/s for 3+ consecutive
     // seconds while active), false when rate recovers. Used to show a warning.
     var onThrottleChanged: ((Bool) -> Void)?
@@ -148,8 +149,10 @@ extension MCPeerManager: MCSessionDelegate {
         if recvWindowStart == 0 { recvWindowStart = now }
         if now - recvWindowStart >= 1.0 {
             let avgGap = recvGapSamples > 0 ? recvGapSum / Double(recvGapSamples) : 0
-            NetworkManager.log(String(format: "[MC-recv] %d frames/s  gap avg=%.1fms max=%.1fms",
-                                      recvCount, avgGap, recvGapMax))
+            let line = String(format: "[MC-recv] %d frames/s  gap avg=%.1fms max=%.1fms",
+                              recvCount, avgGap, recvGapMax)
+            NetworkManager.log(line)
+            DispatchQueue.main.async { self.onDiagnosticLog?(line) }
             recvCount = 0; recvGapSum = 0; recvGapMax = 0
             recvGapSamples = 0; recvWindowStart = now
         }
