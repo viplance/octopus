@@ -23,7 +23,7 @@ struct ContentView: View {
             }
             .padding(.bottom, 4)
 
-            Text("Status: \(appState.connectionStatus.rawValue)")
+            Text(statusText)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
 
@@ -135,6 +135,14 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             appState.networkManager.stop()
         }
+    }
+
+    private var statusText: String {
+        if appState.connectionStatus == .connected {
+            let type = appState.networkType.displayName
+            return type.isEmpty ? "Status: Connected" : "Status: Connected (\(type))"
+        }
+        return "Status: \(appState.connectionStatus.rawValue)"
     }
 
     private var statusColor: Color {

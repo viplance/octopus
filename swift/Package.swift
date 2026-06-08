@@ -27,6 +27,7 @@ let package = Package(
                 .linkedFramework("Combine"),
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("ServiceManagement"),
+                .linkedFramework("MultipeerConnectivity"),
             ]
         )
     ]

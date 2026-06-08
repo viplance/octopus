@@ -7,6 +7,7 @@ import IOKit.pwr_mgt
 class AppState: ObservableObject {
     @Published var isSharingActive = false
     @Published var connectionStatus: ConnectionStatus = .disconnected
+    @Published var networkType: NetworkManager.NetworkType = .unknown
     @Published var connectedDeviceName: String?
     @Published var availableDevices: [BluetoothDevice] = []
     @Published var launchAtLogin = false
@@ -131,6 +132,11 @@ class AppState: ObservableObject {
         networkManager.$connectionStatus
             .receive(on: RunLoop.main)
             .assign(to: \.connectionStatus, on: self)
+            .store(in: &cancellables)
+
+        networkManager.$networkType
+            .receive(on: RunLoop.main)
+            .assign(to: \.networkType, on: self)
             .store(in: &cancellables)
 
         // When connection drops while sharing is active, return control and alert.

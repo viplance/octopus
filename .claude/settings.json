@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(grep -iE \"\\\\.\\(tsx|jsx|ts|js|css|scss|html|vue|svelte\\)$\")",
-      "Bash(swift build *)"
+      "Bash(swift build *)",
+      "Bash(ln -s ../../MCPeerManager.swift /Users/dzmitrysharko/Projects/OctopusSync/swift/Sources/OctopusSync/MCPeerManager.swift)"
     ]
   }
 }
