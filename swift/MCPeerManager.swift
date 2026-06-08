@@ -55,9 +55,13 @@ final class MCPeerManager: NSObject {
         NetworkManager.log("[MC] stopped")
     }
 
-    func send(_ data: Data) {
+    // mouseMove frames are sent unreliable — no head-of-line blocking, stale
+    // deltas are worthless anyway. Everything else (clicks, keys, control) uses
+    // reliable so it is never silently dropped.
+    func send(_ data: Data, reliable: Bool) {
         guard let session, !session.connectedPeers.isEmpty else { return }
-        try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
+        let mode: MCSessionSendDataMode = reliable ? .reliable : .unreliable
+        try? session.send(data, toPeers: session.connectedPeers, with: mode)
     }
 
     var isConnected: Bool {
@@ -84,7 +88,9 @@ extension MCPeerManager: MCSessionDelegate {
     }
 
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
-        onDataReceived?(data)
+        // MCSession delivers on its own internal queue — dispatch to main to
+        // keep recvBuffer access single-threaded with the rest of NetworkManager.
+        DispatchQueue.main.async { self.onDataReceived?(data) }
     }
 
     // Unused stream/resource callbacks — required by protocol.

@@ -24,7 +24,10 @@ class InputManager {
     private var batchDx: Double = 0
     private var batchDy: Double = 0
     private var batchTimer: CFRunLoopTimer?
-    private static let batchInterval: CFTimeInterval = 0.008
+    // WiFi: batch at 8ms (~125 Hz) to avoid flooding TCP.
+    // Direct/AWDL: send immediately — unreliable transport has no queue buildup,
+    // and batching only adds artificial latency on a low-RTT link.
+    var mouseBatchInterval: CFTimeInterval = 0.008
 
     // Periodically verifies the tap is still live. macOS silently disables a
     // CGEventTap (tapDisabledByTimeout) on system/display sleep-wake, HID
@@ -276,8 +279,12 @@ class InputManager {
     func accumulateMouseMove(dx: Double, dy: Double) {
         batchDx += dx
         batchDy += dy
+        if mouseBatchInterval == 0 {
+            flushMouseBatch()
+            return
+        }
         if batchTimer == nil, let loop = tapRunLoop {
-            let timer = CFRunLoopTimerCreateWithHandler(kCFAllocatorDefault, CFAbsoluteTimeGetCurrent() + Self.batchInterval, 0, 0, 0) { [weak self] _ in
+            let timer = CFRunLoopTimerCreateWithHandler(kCFAllocatorDefault, CFAbsoluteTimeGetCurrent() + mouseBatchInterval, 0, 0, 0) { [weak self] _ in
                 self?.flushMouseBatch()
             }
             batchTimer = timer

@@ -385,7 +385,8 @@ class NetworkManager: ObservableObject {
     // MARK: - Sending
 
     func sendEvent(_ event: InputEvent) {
-        if event.type == .mouseMove && pendingSendCount > 3 { return }
+        let isMove = event.type == .mouseMove
+        if isMove && pendingSendCount > 3 { return }
         guard let frame = encodeFrame(event) else { return }
 
         switch activeTransport {
@@ -396,7 +397,9 @@ class NetworkManager: ObservableObject {
                 self?.pendingSendCount -= 1
             }))
         case .multipeer:
-            mcPeer.send(frame)
+            // mouseMove: unreliable (no head-of-line blocking, stale deltas are useless).
+            // Everything else: reliable (clicks, keys, control messages must not be lost).
+            mcPeer.send(frame, reliable: !isMove)
         case .none:
             break
         }

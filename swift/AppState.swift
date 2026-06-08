@@ -136,7 +136,13 @@ class AppState: ObservableObject {
 
         networkManager.$networkType
             .receive(on: RunLoop.main)
-            .assign(to: \.networkType, on: self)
+            .sink { [weak self] type in
+                guard let self else { return }
+                self.networkType = type
+                // Direct/AWDL uses unreliable transport — send mouse deltas
+                // immediately instead of batching to avoid artificial latency.
+                self.inputManager.mouseBatchInterval = (type == .direct) ? 0 : 0.008
+            }
             .store(in: &cancellables)
 
         // When connection drops while sharing is active, return control and alert.
