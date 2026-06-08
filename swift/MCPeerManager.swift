@@ -22,6 +22,19 @@ final class MCPeerManager: NSObject {
 
     private var started = false
 
+    // Send-side diagnostics
+    private var movesSentThisSecond = 0
+    private var movesDroppedThisSecond = 0
+    private var diagWindowStart: CFTimeInterval = 0
+
+    // Receive-side gap diagnostics
+    private var lastRecvTime: CFTimeInterval = 0
+    private var recvCount = 0
+    private var recvWindowStart: CFTimeInterval = 0
+    private var recvGapMax: Double = 0
+    private var recvGapSum: Double = 0
+    private var recvGapSamples = 0
+
     func start() {
         guard !started else { return }
         started = true
@@ -54,11 +67,6 @@ final class MCPeerManager: NSObject {
         session = nil
         NetworkManager.log("[MC] stopped")
     }
-
-    // Diagnostics: count drops and moves per second to detect queue buildup.
-    private var movesSentThisSecond = 0
-    private var movesDroppedThisSecond = 0
-    private var diagWindowStart: CFTimeInterval = 0
 
     // mouseMove frames are sent unreliable — no head-of-line blocking, stale
     // deltas are worthless anyway. Everything else (clicks, keys, control) uses
@@ -107,6 +115,23 @@ extension MCPeerManager: MCSessionDelegate {
     }
 
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
+        let now = CFAbsoluteTimeGetCurrent()
+        if lastRecvTime > 0 {
+            let gapMs = (now - lastRecvTime) * 1000
+            recvGapMax = max(recvGapMax, gapMs)
+            recvGapSum += gapMs
+            recvGapSamples += 1
+        }
+        lastRecvTime = now
+        recvCount += 1
+        if recvWindowStart == 0 { recvWindowStart = now }
+        if now - recvWindowStart >= 1.0 {
+            let avgGap = recvGapSamples > 0 ? recvGapSum / Double(recvGapSamples) : 0
+            NetworkManager.log(String(format: "[MC-recv] %d frames/s  gap avg=%.1fms max=%.1fms",
+                                      recvCount, avgGap, recvGapMax))
+            recvCount = 0; recvGapSum = 0; recvGapMax = 0
+            recvGapSamples = 0; recvWindowStart = now
+        }
         // MCSession delivers on its own internal queue — dispatch to main to
         // keep recvBuffer access single-threaded with the rest of NetworkManager.
         DispatchQueue.main.async { self.onDataReceived?(data) }

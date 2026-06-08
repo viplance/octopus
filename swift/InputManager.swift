@@ -374,30 +374,35 @@ class InputManager {
         point.y = max(bounds.minY, min(point.y, bounds.maxY - 1))
     }
 
-    // Sampling state for latency logging — log one mouseMove per second
-    // to keep the log readable without missing spikes.
-    private var latencyLogCount = 0
-    private var latencyLogWindowStart: CFTimeInterval = 0
-    private var latencyMax: Double = 0
-    private var latencySum: Double = 0
+    // Inter-arrival gap diagnostics: measure time between consecutive mouseMove
+    // injections. Large gaps (>50ms) explain visible jitter even if the sender
+    // is steady — they reveal queuing, GCD delay, or AWDL radio pauses.
+    private var lastInjectTime: CFTimeInterval = 0
+    private var injectCount = 0
+    private var injectWindowStart: CFTimeInterval = 0
+    private var gapMax: Double = 0
+    private var gapSum: Double = 0
+    private var gapSamples = 0
 
     func injectEvent(_ event: InputEvent) {
         switch event.type {
         case .mouseMove:
-            if let sent = event.sentAt {
-                let now = CACurrentMediaTime()
-                let latencyMs = (now - sent) * 1000
-                latencyMax = max(latencyMax, latencyMs)
-                latencySum += latencyMs
-                latencyLogCount += 1
-                if latencyLogWindowStart == 0 { latencyLogWindowStart = now }
-                if now - latencyLogWindowStart >= 1.0 {
-                    let avg = latencySum / Double(latencyLogCount)
-                    NetworkManager.log(String(format: "[Latency] mouseMove — avg %.1fms  max %.1fms  (%d events/s)",
-                                              avg, latencyMax, latencyLogCount))
-                    latencyLogCount = 0; latencySum = 0; latencyMax = 0
-                    latencyLogWindowStart = now
-                }
+            let now = CACurrentMediaTime()
+            if lastInjectTime > 0 {
+                let gapMs = (now - lastInjectTime) * 1000
+                gapMax = max(gapMax, gapMs)
+                gapSum += gapMs
+                gapSamples += 1
+            }
+            lastInjectTime = now
+            injectCount += 1
+            if injectWindowStart == 0 { injectWindowStart = now }
+            if now - injectWindowStart >= 1.0 {
+                let avgGap = gapSamples > 0 ? gapSum / Double(gapSamples) : 0
+                NetworkManager.log(String(format: "[Inject] mouseMove %d/s  gap avg=%.1fms max=%.1fms",
+                                          injectCount, avgGap, gapMax))
+                injectCount = 0; gapSum = 0; gapMax = 0; gapSamples = 0
+                injectWindowStart = now
             }
             let dx = event.dx ?? 0
             let dy = event.dy ?? 0

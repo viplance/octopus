@@ -155,7 +155,7 @@ class NetworkManager: ObservableObject {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     guard let self, self.activeTransport == .multipeer else { return }
                     Self.log("[MC] still disconnected after grace period — tearing down")
-                    self.teardown()
+                    self.teardown(wasDirectTransport: true)
                 }
             }
         }
@@ -374,7 +374,7 @@ class NetworkManager: ObservableObject {
         conn.start(queue: .main)
     }
 
-    private func teardown() {
+    private func teardown(wasDirectTransport: Bool = false) {
         activeTransport = nil
         cancelIntentionally(connection)
         connection = nil
@@ -382,11 +382,21 @@ class NetworkManager: ObservableObject {
         pendingSendCount = 0
         guard connectionStatus != .disconnected else { return }
         connectionStatus = .disconnected
+
+        // Always restart MC immediately — it has the fastest path back to Direct.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self, self.started else { return }
             self.startListening()
-            self.startBrowsing()
             self.startMCPeer()
+        }
+
+        // If the previous connection was Direct (MC), delay starting Bonjour/WiFi
+        // so MC gets a head start and we don't immediately fall back to WiFi.
+        // If it was already WiFi/Ethernet, start Bonjour right away.
+        let bonjourDelay: Double = wasDirectTransport ? 10 : 2
+        DispatchQueue.main.asyncAfter(deadline: .now() + bonjourDelay) { [weak self] in
+            guard let self, self.started, self.activeTransport == nil else { return }
+            self.startBrowsing()
         }
     }
 
