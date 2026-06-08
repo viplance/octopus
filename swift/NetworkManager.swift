@@ -458,16 +458,25 @@ class NetworkManager: ObservableObject {
 
     func sendEvent(_ event: InputEvent) {
         let isMove = event.type == .mouseMove
-        if isMove && pendingSendCount > 3 { return }
+        // WiFi: drop mouse moves when TCP send queue backs up (high RTT, limited buffer).
+        // Ethernet: RTT < 1ms, no need to drop — use a higher threshold.
+        let dropThreshold = (networkType == .wiredEthernet) ? 16 : 3
+        if isMove && pendingSendCount > dropThreshold { return }
         guard let frame = encodeFrame(event) else { return }
 
         switch activeTransport {
         case .bonjour:
             guard let conn = connection, conn.state == .ready else { return }
-            pendingSendCount += 1
-            conn.send(content: frame, completion: .contentProcessed({ [weak self] _ in
-                self?.pendingSendCount -= 1
-            }))
+            if isMove {
+                // idempotent: fire-and-forget, no backpressure callback.
+                // Stale mouse deltas are worthless so we don't need delivery confirmation.
+                conn.send(content: frame, completion: .idempotent)
+            } else {
+                pendingSendCount += 1
+                conn.send(content: frame, completion: .contentProcessed({ [weak self] _ in
+                    self?.pendingSendCount -= 1
+                }))
+            }
         case .multipeer:
             // mouseMove: unreliable (no head-of-line blocking, stale deltas are useless).
             // Everything else: reliable (clicks, keys, control messages must not be lost).

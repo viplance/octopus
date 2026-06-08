@@ -145,9 +145,9 @@ class AppState: ObservableObject {
             .sink { [weak self] type in
                 guard let self else { return }
                 self.networkType = type
-                // Direct/AWDL uses unreliable transport — send mouse deltas
-                // immediately instead of batching to avoid artificial latency.
-                self.inputManager.mouseBatchInterval = (type == .direct) ? 0 : 0.008
+                // Low-latency links (Direct/AWDL, wired Ethernet) send deltas
+                // immediately. WiFi batches at 8ms to avoid flooding TCP.
+                self.inputManager.mouseBatchInterval = (type == .direct || type == .wiredEthernet) ? 0 : 0.008
             }
             .store(in: &cancellables)
 
