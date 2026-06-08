@@ -147,8 +147,16 @@ class NetworkManager: ObservableObject {
             guard let self else { return }
             DispatchQueue.main.async {
                 guard self.activeTransport == .multipeer else { return }
-                Self.log("[MC] disconnected — tearing down")
-                self.teardown()
+                Self.log("[MC] disconnected — waiting 3s before teardown (AWDL may recover)")
+                // AWDL (Direct) sessions drop briefly when the radio is busy with
+                // AirDrop, Handoff, or BLE scans. Give MCSession time to reconnect
+                // before falling back to WiFi — otherwise a 200ms blip causes a
+                // full transport switch and the user sees Direct→WiFi flicker.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                    guard let self, self.activeTransport == .multipeer else { return }
+                    Self.log("[MC] still disconnected after grace period — tearing down")
+                    self.teardown()
+                }
             }
         }
 
@@ -399,7 +407,7 @@ class NetworkManager: ObservableObject {
         case .multipeer:
             // mouseMove: unreliable (no head-of-line blocking, stale deltas are useless).
             // Everything else: reliable (clicks, keys, control messages must not be lost).
-            mcPeer.send(frame, reliable: !isMove)
+            mcPeer.send(frame, reliable: !isMove, isMove: isMove)
         case .none:
             break
         }

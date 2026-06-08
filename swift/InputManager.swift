@@ -305,7 +305,7 @@ class InputManager {
         // If a mouse button is currently held, encode this batch as a drag so
         // the slave can post leftMouseDragged / rightMouseDragged. The button
         // field carries the held button index (0 = left, 1 = right).
-        let moveEvent = InputEvent(type: .mouseMove, dx: dx, dy: dy, button: heldMouseButton, keyCode: nil, isDown: nil, flags: nil, rawData: nil, control: nil, clickCount: nil)
+        let moveEvent = InputEvent(type: .mouseMove, dx: dx, dy: dy, button: heldMouseButton, keyCode: nil, isDown: nil, flags: nil, rawData: nil, control: nil, clickCount: nil, sentAt: CACurrentMediaTime())
         onEventCaptured?(moveEvent)
     }
 
@@ -374,9 +374,31 @@ class InputManager {
         point.y = max(bounds.minY, min(point.y, bounds.maxY - 1))
     }
 
+    // Sampling state for latency logging — log one mouseMove per second
+    // to keep the log readable without missing spikes.
+    private var latencyLogCount = 0
+    private var latencyLogWindowStart: CFTimeInterval = 0
+    private var latencyMax: Double = 0
+    private var latencySum: Double = 0
+
     func injectEvent(_ event: InputEvent) {
         switch event.type {
         case .mouseMove:
+            if let sent = event.sentAt {
+                let now = CACurrentMediaTime()
+                let latencyMs = (now - sent) * 1000
+                latencyMax = max(latencyMax, latencyMs)
+                latencySum += latencyMs
+                latencyLogCount += 1
+                if latencyLogWindowStart == 0 { latencyLogWindowStart = now }
+                if now - latencyLogWindowStart >= 1.0 {
+                    let avg = latencySum / Double(latencyLogCount)
+                    NetworkManager.log(String(format: "[Latency] mouseMove — avg %.1fms  max %.1fms  (%d events/s)",
+                                              avg, latencyMax, latencyLogCount))
+                    latencyLogCount = 0; latencySum = 0; latencyMax = 0
+                    latencyLogWindowStart = now
+                }
+            }
             let dx = event.dx ?? 0
             let dy = event.dy ?? 0
             let currentLocEvent = CGEvent(source: nil)

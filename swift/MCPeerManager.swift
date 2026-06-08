@@ -55,13 +55,31 @@ final class MCPeerManager: NSObject {
         NetworkManager.log("[MC] stopped")
     }
 
+    // Diagnostics: count drops and moves per second to detect queue buildup.
+    private var movesSentThisSecond = 0
+    private var movesDroppedThisSecond = 0
+    private var diagWindowStart: CFTimeInterval = 0
+
     // mouseMove frames are sent unreliable — no head-of-line blocking, stale
     // deltas are worthless anyway. Everything else (clicks, keys, control) uses
     // reliable so it is never silently dropped.
-    func send(_ data: Data, reliable: Bool) {
+    func send(_ data: Data, reliable: Bool, isMove: Bool = false) {
         guard let session, !session.connectedPeers.isEmpty else { return }
         let mode: MCSessionSendDataMode = reliable ? .reliable : .unreliable
-        try? session.send(data, toPeers: session.connectedPeers, with: mode)
+        let result = Result { try session.send(data, toPeers: session.connectedPeers, with: mode) }
+
+        if isMove {
+            let now = CFAbsoluteTimeGetCurrent()
+            if diagWindowStart == 0 { diagWindowStart = now }
+            switch result {
+            case .success: movesSentThisSecond += 1
+            case .failure: movesDroppedThisSecond += 1
+            }
+            if now - diagWindowStart >= 1.0 {
+                NetworkManager.log("[MC] mouseMove sent=\(movesSentThisSecond) dropped=\(movesDroppedThisSecond) /s")
+                movesSentThisSecond = 0; movesDroppedThisSecond = 0; diagWindowStart = now
+            }
+        }
     }
 
     var isConnected: Bool {
@@ -74,7 +92,8 @@ final class MCPeerManager: NSObject {
 extension MCPeerManager: MCSessionDelegate {
 
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
-        NetworkManager.log("[MC] peer \(peerID.displayName) state: \(state.rawValue)")
+        let stateName = state == .connected ? "connected" : state == .notConnected ? "notConnected" : "connecting"
+        NetworkManager.log("[MC] peer \(peerID.displayName) → \(stateName)")
         DispatchQueue.main.async {
             switch state {
             case .connected:
