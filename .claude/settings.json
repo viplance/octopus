@@ -6,7 +6,10 @@
       "Bash(ln -s ../../MCPeerManager.swift /Users/dzmitrysharko/Projects/OctopusSync/swift/Sources/OctopusSync/MCPeerManager.swift)",
       "Bash(ssh fundraiseup.local \"cat /tmp/octopus-debug.log\")",
       "Bash(ssh FundraiseUp.local \"cat /tmp/octopus-debug.log\")",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Bash(networksetup -listallhardwareports)",
+      "Bash(ifconfig en1 *)",
+      "Bash(system_profiler SPNetworkDataType)"
     ]
   }
 }

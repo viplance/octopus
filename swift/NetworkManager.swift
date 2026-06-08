@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Combine
+import Darwin
 
 class NetworkManager: ObservableObject {
     @Published var connectionStatus: AppState.ConnectionStatus = .disconnected
@@ -75,7 +76,13 @@ class NetworkManager: ObservableObject {
         startPathMonitor()
         startListening()
         startBrowsing()
-        startMCPeer()
+        // Delay MC so Bonjour/TCP wins when a wired interface (USB-C/Thunderbolt) is present.
+        let mcDelay: Double = Self.hasWiredInterface() ? 5 : 0
+        if mcDelay > 0 { Self.log("[Network] wired interface detected — delaying MC by \(Int(mcDelay))s") }
+        DispatchQueue.main.asyncAfter(deadline: .now() + mcDelay) { [weak self] in
+            guard let self, self.started, self.activeTransport == nil else { return }
+            self.startMCPeer()
+        }
     }
 
     func stop() {
@@ -123,10 +130,42 @@ class NetworkManager: ObservableObject {
 
     private static func networkType(from path: NWPath?) -> NetworkType {
         guard let path, path.status == .satisfied else { return .unknown }
-        if path.usesInterfaceType(.other) { return .direct }
-        if path.usesInterfaceType(.wifi) { return .wifi }
         if path.usesInterfaceType(.wiredEthernet) { return .wiredEthernet }
+        if hasWiredInterface() { return .wiredEthernet }
+        if path.usesInterfaceType(.wifi) { return .wifi }
+        // .other covers AWDL (Direct p2p) but also USB/Thunderbolt Ethernet adapters
+        // that macOS doesn't classify as .wiredEthernet. Since we already checked
+        // both .wiredEthernet and getifaddrs above, .other here means real p2p/Direct.
+        if path.usesInterfaceType(.other) { return .direct }
         return .unknown
+    }
+
+    // NWPathMonitor only reports the default-route interface and misses USB/Thunderbolt
+    // Ethernet adapters when WiFi is also active (WiFi wins the default route). This
+    // checks getifaddrs directly for any UP, non-loopback, non-AWDL Ethernet interface
+    // with an assigned IP — which covers USB-C/Thunderbolt dongles and direct cables.
+    private static func hasWiredInterface() -> Bool {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return false }
+        defer { freeifaddrs(ifaddr) }
+        var ptr: UnsafeMutablePointer<ifaddrs>? = first
+        while let iface = ptr {
+            let name = String(cString: iface.pointee.ifa_name)
+            let flags = Int32(iface.pointee.ifa_flags)
+            let isUp = (flags & IFF_UP) != 0
+            let isLoopback = (flags & IFF_LOOPBACK) != 0
+            // en0 = WiFi, awdl0/llw0 = AWDL — skip those
+            let isWifi = name == "en0"
+            let isAWDL = name.hasPrefix("awdl") || name.hasPrefix("llw")
+            let hasAddr = iface.pointee.ifa_addr != nil &&
+                          iface.pointee.ifa_addr.pointee.sa_family == UInt8(AF_INET)
+            if isUp && !isLoopback && !isWifi && !isAWDL && hasAddr && name.hasPrefix("en") {
+                Self.log("[PathMonitor] wired interface detected: \(name)")
+                return true
+            }
+            ptr = iface.pointee.ifa_next
+        }
+        return false
     }
 
     // MARK: - Multipeer (Direct / AWDL)
