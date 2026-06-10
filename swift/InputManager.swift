@@ -139,6 +139,13 @@ class InputManager {
             if let field = CGEventField(rawValue: 87) {
                 let registryID = UInt64(event.getIntegerValueField(field))
                 if registryID != 0 && !manager.allowedRegistryIDs.contains(registryID) {
+                    // Event is from a non-selected device (e.g. internal trackpad).
+                    // Update savedCursorPosition so that when we later warp the cursor
+                    // for an allowed device, we don't generate a large synthetic delta.
+                    let isMouseMove = type == .mouseMoved || type == .leftMouseDragged || type == .rightMouseDragged
+                    if isMouseMove {
+                        manager.savedCursorPosition = event.location
+                    }
                     return Unmanaged.passRetained(event)
                 }
             }

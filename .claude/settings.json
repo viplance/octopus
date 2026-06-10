@@ -9,7 +9,21 @@
       "Bash(git fetch *)",
       "Bash(networksetup -listallhardwareports)",
       "Bash(ifconfig en1 *)",
-      "Bash(system_profiler SPNetworkDataType)"
+      "Bash(system_profiler SPNetworkDataType)",
+      "Bash(log stream *)",
+      "Bash(xcodebuild -project OctopusSync.xcodeproj -scheme OctopusSync -configuration Debug build)",
+      "Bash(node scripts/build.mjs)",
+      "Bash(node scripts/restart.mjs)",
+      "Bash(ioreg -l -r -d 5)",
+      "Bash(ioreg -l -r -d 8 -c IOHIDDevice)",
+      "Bash(ioreg -r -c IOHIDDevice -l)",
+      "Bash(python3 -c ' *)",
+      "Bash(ioreg -r -c IOHIDDevice)",
+      "Bash(ioreg -r -c AppleHIDTransportHIDDevice)",
+      "Bash(ioreg -r -d 5)",
+      "Bash(ioreg -l -r)",
+      "Bash(ioreg -l)",
+      "Bash(log show *)"
     ]
   }
 }

@@ -33,7 +33,6 @@ class DeviceManager: ObservableObject {
         if IORegistryEntryGetRegistryEntryID(entry, &id) == KERN_SUCCESS {
             set.insert(id)
         }
-        
         var iterator: io_iterator_t = 0
         if IORegistryEntryGetChildIterator(entry, kIOServicePlane, &iterator) == KERN_SUCCESS {
             defer { IOObjectRelease(iterator) }
@@ -90,6 +89,7 @@ class DeviceManager: ObservableObject {
             let transport = IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? ""
             let isInternal = name.contains("Internal") || name.contains("Built-in")
                 || transport == "SPI" || transport == "I2C"
+                || transport == "FIFO" || transport == "SPMI" || transport == "SPU"
             if isInternal { continue }
             
             let usagePage = IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsagePageKey as CFString) as? Int ?? 0
