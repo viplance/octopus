@@ -157,8 +157,13 @@ class AppState: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] status in
                 guard let self = self else { return }
-                if status == .disconnected && self.isSharingActive {
-                    self.restoreLocalControl()
+                if status == .disconnected {
+                    // Release any injected mouse buttons so the slave doesn't stay
+                    // stuck with a phantom "button held" state after the connection drops.
+                    self.inputManager.releaseAllButtons()
+                    if self.isSharingActive {
+                        self.restoreLocalControl()
+                    }
                 }
                 if status == .connected {
                     self.sendMonitorSync(config: self.monitorManager.config)

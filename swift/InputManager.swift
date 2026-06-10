@@ -383,6 +383,33 @@ class InputManager {
         point.y = max(bounds.minY, min(point.y, bounds.maxY - 1))
     }
 
+    // Tracks injected mouse buttons so we can release them if the connection drops
+    // mid-click. Without this, the slave stays stuck in a "button held" state and
+    // ignores further clicks until the user physically clicks their own trackpad.
+    private var injectedHeldButtons: Set<Int> = []
+    private var buttonReleaseTimers: [Int: DispatchWorkItem] = [:]
+    private static let buttonHoldTimeout: Double = 3.0
+
+    func releaseAllButtons() {
+        for (_, timer) in buttonReleaseTimers { timer.cancel() }
+        buttonReleaseTimers.removeAll()
+        for button in injectedHeldButtons {
+            injectMouseUp(button: button)
+        }
+        injectedHeldButtons.removeAll()
+    }
+
+    private func injectMouseUp(button: Int) {
+        let isRight = button == 1
+        let clickType: CGEventType = isRight ? .rightMouseUp : .leftMouseUp
+        let btn: CGMouseButton = isRight ? .right : .left
+        let currentLocEvent = CGEvent(source: nil)
+        let loc = currentLocEvent?.location ?? .zero
+        if let upEvent = CGEvent(mouseEventSource: nil, mouseType: clickType, mouseCursorPosition: loc, mouseButton: btn) {
+            upEvent.post(tap: .cgSessionEventTap)
+        }
+    }
+
     // Inter-arrival gap diagnostics: measure time between consecutive mouseMove
     // injections. Large gaps (>50ms) explain visible jitter even if the sender
     // is steady — they reveal queuing, GCD delay, or AWDL radio pauses.
@@ -466,6 +493,24 @@ class InputManager {
                     clickEvent.setIntegerValueField(.mouseEventClickState, value: Int64(cs))
                 }
                 clickEvent.post(tap: .cgSessionEventTap)
+                let buttonIndex = isRight ? 1 : 0
+                if isDown {
+                    injectedHeldButtons.insert(buttonIndex)
+                    // Safety net: if mouseUp never arrives (dropped packet), release after timeout.
+                    buttonReleaseTimers[buttonIndex]?.cancel()
+                    let work = DispatchWorkItem { [weak self] in
+                        guard let self, self.injectedHeldButtons.contains(buttonIndex) else { return }
+                        self.injectMouseUp(button: buttonIndex)
+                        self.injectedHeldButtons.remove(buttonIndex)
+                        self.buttonReleaseTimers.removeValue(forKey: buttonIndex)
+                    }
+                    buttonReleaseTimers[buttonIndex] = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Self.buttonHoldTimeout, execute: work)
+                } else {
+                    buttonReleaseTimers[buttonIndex]?.cancel()
+                    buttonReleaseTimers.removeValue(forKey: buttonIndex)
+                    injectedHeldButtons.remove(buttonIndex)
+                }
             }
         case .raw:
             if let data = event.rawData as CFData? {
