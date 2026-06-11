@@ -201,7 +201,10 @@ class AppState: ObservableObject {
 
         // When this Mac is the receiver, forward diagnostic lines to the master
         // via the existing event channel so both sides appear in one log file.
+        // Only when debug logging is on: these per-second control messages ride
+        // the same reliable channel as clicks/keys.
         let sendDiag: (String) -> Void = { [weak self] line in
+            guard NetworkManager.debugLoggingEnabled else { return }
             guard let self, self.connectionStatus == .connected else { return }
             let event = InputEvent(type: .keyDown, dx: nil, dy: nil, button: nil,
                                    keyCode: nil, isDown: nil, flags: nil, rawData: nil,

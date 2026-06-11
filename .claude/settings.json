@@ -23,7 +23,8 @@
       "Bash(ioreg -r -d 5)",
       "Bash(ioreg -l -r)",
       "Bash(ioreg -l)",
-      "Bash(log show *)"
+      "Bash(log show *)",
+      "Bash(ps -p 35358 -o pid,lstart,etime,comm)"
     ]
   }
 }

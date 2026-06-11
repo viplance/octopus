@@ -44,6 +44,17 @@ class NetworkManager: ObservableObject {
     // trigger teardown as if it were an unexpected disconnect.
     private var cancelledConnections = Set<ObjectIdentifier>()
 
+    // Bonjour resolution follows the default route (usually WiFi), so an
+    // outbound connection silently rides WiFi even when a direct cable is
+    // plugged in. When a wired interface is present we pin the connection to
+    // it; if that attempt fails (cable to a different network, no link), the
+    // next attempt goes unrestricted. Cleared on any path change (replug).
+    private var wiredOnlyConnectFailed = false
+    private var connectionIsWiredOnly = false
+    // Distinguishes "wired attempt never connected" (fall back to WiFi) from
+    // "long-lived wired connection dropped" (retry wired — likely transient).
+    private var connectionReachedReady = false
+
     private let serviceType = "_octopussync._tcp"
     private let myName: String = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
     private let instanceID = UUID().uuidString
@@ -56,6 +67,12 @@ class NetworkManager: ObservableObject {
 
     // MARK: - Lifecycle
 
+    // Debug logging is OFF by default: the synchronous file writes run on hot
+    // threads (main, tap thread, MC delegate queue) and the per-second peerLog
+    // control messages share the reliable channel with clicks/keys.
+    // Re-enable with: defaults write enotix.OctopusSync debugLogging -bool YES
+    static let debugLoggingEnabled = UserDefaults.standard.bool(forKey: "debugLogging")
+
     private static let logFile: FileHandle? = {
         let path = "/tmp/octopus-debug.log"
         FileManager.default.createFile(atPath: path, contents: nil)
@@ -63,10 +80,10 @@ class NetworkManager: ObservableObject {
     }()
 
     static func log(_ msg: String) {
+        guard debugLoggingEnabled else { return }
         let line = "\(Date()) \(msg)\n"
         logFile?.seekToEndOfFile()
         logFile?.write(line.data(using: .utf8)!)
-        print(msg)
     }
 
     func start() {
@@ -116,9 +133,19 @@ class NetworkManager: ObservableObject {
             guard let self else { return }
             let type = Self.networkType(from: path)
             DispatchQueue.main.async {
-                self.networkType = type
+                // Path changed — a failed wired attempt may succeed now (replug).
+                if type != self.networkType { self.wiredOnlyConnectFailed = false }
+                // While connected, networkType is derived from the connection's
+                // own path; the default-route path here is often WiFi and would
+                // misreport the type (e.g. "Ethernet" while traffic is on WiFi).
+                if self.activeTransport == nil {
+                    self.networkType = type
+                }
                 // Network came back while we're disconnected — kick reconnection.
-                if type != .unknown && self.started && self.activeTransport == nil {
+                // Only when discovery isn't already running: path updates fire
+                // every few seconds (WiFi scans) and restarting the browser each
+                // time cancels in-flight resolution and delays reconnects.
+                if type != .unknown && self.started && self.activeTransport == nil && self.browser == nil {
                     Self.log("[PathMonitor] network restored, restarting discovery")
                     self.startBrowsing()
                     self.startMCPeer()
@@ -128,10 +155,14 @@ class NetworkManager: ObservableObject {
         monitor.start(queue: .main)
     }
 
-    private static func networkType(from path: NWPath?) -> NetworkType {
+    // `wiredFallback` must be false when classifying a specific connection's
+    // path: getifaddrs only proves a cable is plugged in, not that this
+    // connection uses it, and reporting "Ethernet" for a WiFi connection hides
+    // exactly the lag source we need to see.
+    private static func networkType(from path: NWPath?, wiredFallback: Bool = true) -> NetworkType {
         guard let path, path.status == .satisfied else { return .unknown }
         if path.usesInterfaceType(.wiredEthernet) { return .wiredEthernet }
-        if hasWiredInterface() { return .wiredEthernet }
+        if wiredFallback && hasWiredInterface() { return .wiredEthernet }
         if path.usesInterfaceType(.wifi) { return .wifi }
         // .other covers AWDL (Direct p2p) but also USB/Thunderbolt Ethernet adapters
         // that macOS doesn't classify as .wiredEthernet. Since we already checked
@@ -369,10 +400,17 @@ class NetworkManager: ObservableObject {
             tcp.keepaliveInterval = 2
             tcp.keepaliveCount = 3
         }
-        setupConnection(NWConnection(to: endpoint, using: params))
+        let wiredOnly = !wiredOnlyConnectFailed && Self.hasWiredInterface()
+        if wiredOnly {
+            params.requiredInterfaceType = .wiredEthernet
+            Self.log("[Connection] pinning to wired interface")
+        }
+        setupConnection(NWConnection(to: endpoint, using: params), wiredOnly: wiredOnly)
     }
 
-    private func setupConnection(_ conn: NWConnection) {
+    private func setupConnection(_ conn: NWConnection, wiredOnly: Bool = false) {
+        connectionIsWiredOnly = wiredOnly
+        connectionReachedReady = false
         connection = conn
         recvBuffer = Data()
         Self.log("[Connection] setting up to \(conn.endpoint)")
@@ -389,8 +427,9 @@ class NetworkManager: ObservableObject {
                         return
                     }
                     Self.log("[Connection] READY (Bonjour): \(conn.endpoint)")
+                    self.connectionReachedReady = true
                     self.activeTransport = .bonjour
-                    self.networkType = Self.networkType(from: conn.currentPath)
+                    self.networkType = Self.networkType(from: conn.currentPath, wiredFallback: false)
                     self.connectionStatus = .connected
                     self.mcPeer.stop()
                     self.receiveNextFrame()
@@ -400,11 +439,19 @@ class NetworkManager: ObservableObject {
                         guard let self, let conn, self.connection === conn else { return }
                         if conn.state == .preparing || conn.state == .setup {
                             Self.log("[Connection] stuck in preparing, tearing down")
+                            if self.connectionIsWiredOnly {
+                                self.wiredOnlyConnectFailed = true
+                                Self.log("[Connection] wired-only attempt stuck — next attempt unrestricted")
+                            }
                             self.teardown()
                         }
                     }
                 case .failed(let err):
                     Self.log("[Connection] FAILED: \(err)")
+                    if self.connectionIsWiredOnly && !self.connectionReachedReady {
+                        self.wiredOnlyConnectFailed = true
+                        Self.log("[Connection] wired-only connect failed — next attempt unrestricted")
+                    }
                     self.teardown()
                 case .cancelled:
                     // Only treat as unexpected disconnect if this wasn't our own cancel.
